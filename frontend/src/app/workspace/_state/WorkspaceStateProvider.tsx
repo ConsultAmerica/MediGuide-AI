@@ -51,6 +51,7 @@ import {
   type SystemStatus,
   type View,
 } from "./workspace-shared";
+import { apiFetch } from "../../../lib/auth";
 
 function useWorkspaceState() {
   const router = useRouter();
@@ -162,15 +163,15 @@ function useWorkspaceState() {
   }, [mobileNavOpen]);
 
   async function checkHealth() {
-    try { const response = await fetch(`${API_URL}/api/health`); if (!response.ok) throw new Error(); setHealth(await response.json()); }
+    try { const response = await apiFetch(`${API_URL}/api/health`); if (!response.ok) throw new Error(); setHealth(await response.json()); }
     catch { setHealth({ status: "unavailable", ready: 0, total: 10, statuses: {} }); }
   }
 
   async function loadLabs(testCode: string) {
     try {
       const [testsRes, timelineRes] = await Promise.all([
-        fetch(`${API_URL}/api/labs/tests`),
-        fetch(`${API_URL}/api/labs/timeline/${encodeURIComponent(testCode)}`),
+        apiFetch(`${API_URL}/api/labs/tests`),
+        apiFetch(`${API_URL}/api/labs/timeline/${encodeURIComponent(testCode)}`),
       ]);
       if (testsRes.ok) {
         const data = await testsRes.json();
@@ -190,7 +191,7 @@ function useWorkspaceState() {
 
   async function loadLabSummary() {
     try {
-      const response = await fetch(`${API_URL}/api/labs/summary`);
+      const response = await apiFetch(`${API_URL}/api/labs/summary`);
       if (!response.ok) throw new Error();
       const data = await response.json();
       setLabSummary(data.points || []);
@@ -201,7 +202,7 @@ function useWorkspaceState() {
 
   async function loadRecentSessions() {
     try {
-      const response = await fetch(`${API_URL}/api/documents/v2/sessions`);
+      const response = await apiFetch(`${API_URL}/api/documents/v2/sessions`);
       if (!response.ok) throw new Error();
       const data = await response.json();
       setRecentSessions(data.sessions || []);
@@ -212,7 +213,7 @@ function useWorkspaceState() {
 
   async function loadSystemStatus() {
     try {
-      const response = await fetch(`${API_URL}/api/system/status`);
+      const response = await apiFetch(`${API_URL}/api/system/status`);
       if (!response.ok) throw new Error();
       setSystemStatus(await response.json());
     } catch {
@@ -228,7 +229,7 @@ function useWorkspaceState() {
     const nextHistory = [...messages, { role: "user" as const, content: text }];
     setMessages(nextHistory); setAnswer(""); setAnswerStatus(""); setSources([]);
     try {
-      const response = await fetch(`${API_URL}/api/chat/stream`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text, history: messages, answer_detail: answerDetail, reading_level: readingLevel }) });
+      const response = await apiFetch(`${API_URL}/api/chat/stream`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text, history: messages, answer_detail: answerDetail, reading_level: readingLevel }) });
       if (!response.ok || !response.body) { const data = await response.json().catch(() => ({})); throw new Error(data?.error?.message || data.detail || "The local AI service is unavailable."); }
       let finalAnswer = ""; let finalSources: Source[] = []; let finalStatus: AnswerStatus = "answered";
       for await (const event of readSseEvents(response)) {
@@ -258,7 +259,7 @@ function useWorkspaceState() {
 
     let response: Response;
     try {
-      response = await fetch(`${API_URL}/api/documents/v2/upload`, {
+      response = await apiFetch(`${API_URL}/api/documents/v2/upload`, {
         method: "POST",
         body: formData,
       });
@@ -292,7 +293,7 @@ function useWorkspaceState() {
 
     const pollStatus = window.setInterval(async () => {
       try {
-        const statusResponse = await fetch(`${API_URL}/api/documents/v2/${documentId}/status`);
+        const statusResponse = await apiFetch(`${API_URL}/api/documents/v2/${documentId}/status`);
         if (!statusResponse.ok) return;
         const status = (await statusResponse.json()) as {
           status?: string;
@@ -495,7 +496,7 @@ function useWorkspaceState() {
     }
     try {
       setLoadingStage("Opening source document...");
-      const response = await fetch(`${API_URL}/api/documents/v2/${documentId}`);
+      const response = await apiFetch(`${API_URL}/api/documents/v2/${documentId}`);
       if (response.ok) {
         const data = (await response.json()) as DocState;
         setPendingDocId(data.document_id);
@@ -629,7 +630,7 @@ function useWorkspaceState() {
 
   async function deleteLabObservation(observationId: string) {
     try {
-      const response = await fetch(`${API_URL}/api/labs/observations/${observationId}`, { method: "DELETE" });
+      const response = await apiFetch(`${API_URL}/api/labs/observations/${observationId}`, { method: "DELETE" });
       if (!response.ok) throw new Error("Could not delete this observation.");
       setSelectedLabPoint(null);
       setConfirmDeleteObservationId(null);
@@ -659,10 +660,15 @@ function useWorkspaceState() {
     if (!docState || !docReviewChecked || !docFields.length) return;
     setError(""); setDocErrorKind(""); setLoadingStage("Saving your reviewed values...");
     try {
-      const response = await fetch(`${API_URL}/api/documents/v2/${docState.document_id}/confirm`, {
+      const response = await apiFetch(`${API_URL}/api/documents/v2/${docState.document_id}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: docFields, reviewed_names_values_units_dates: true }),
+        // Rejected fields are sent so the server leaves them out of the confirmed record and Labs.
+        body: JSON.stringify({
+          fields: docFields,
+          reviewed_names_values_units_dates: true,
+          excluded_field_ids: docFields.filter((field) => fieldReviewState[field.field_id] === "rejected").map((field) => field.field_id),
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error?.message || data.detail || "Could not confirm this document.");
@@ -702,7 +708,7 @@ function useWorkspaceState() {
     if (!docState || !docConfirmed) return;
     setError(""); setDocErrorKind(""); setDocExplain(null); setLoadingStage("Finding evidence and writing an explanation...");
     try {
-      const response = await fetch(`${API_URL}/api/documents/v2/${docState.document_id}/explain`, {
+      const response = await apiFetch(`${API_URL}/api/documents/v2/${docState.document_id}/explain`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: docQuestion.trim() || undefined }),
@@ -721,6 +727,28 @@ function useWorkspaceState() {
     } finally {
       setLoadingStage("");
     }
+  }
+
+  async function deleteDocument() {
+    const documentId = docState?.document_id;
+    // Demo-mode documents only ever existed in this browser.
+    if (documentId && !documentId.startsWith("demo-")) {
+      try {
+        const response = await apiFetch(`${API_URL}/api/documents/v2/${documentId}`, { method: "DELETE" });
+        if (!response.ok && response.status !== 404) {
+          const failure = await parseApiError(response, "This document could not be deleted.");
+          pushToast(failure.message, "error");
+          return false;
+        }
+      } catch {
+        pushToast("This document could not be deleted. Check your connection and try again.", "error");
+        return false;
+      }
+    }
+    resetDocument();
+    void loadRecentSessions();
+    void loadLabSummary();
+    return true;
   }
 
   function resetDocument() {
@@ -791,7 +819,7 @@ function useWorkspaceState() {
     if (!medState || !medReviewChecked || !medFields.length) return;
     setError(""); setLoadingStage("Saving your reviewed details...");
     try {
-      const response = await fetch(`${API_URL}/api/medications/v2/${medState.medication_id}/confirm`, {
+      const response = await apiFetch(`${API_URL}/api/medications/v2/${medState.medication_id}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fields: medFields, reviewed_name_strength_instructions: true }),
@@ -812,7 +840,7 @@ function useWorkspaceState() {
     if (!medState || !medConfirmed) return;
     setError(""); setMedInfo(null); setLoadingStage("Finding evidence and writing educational information...");
     try {
-      const response = await fetch(`${API_URL}/api/medications/v2/${medState.medication_id}/info`, {
+      const response = await apiFetch(`${API_URL}/api/medications/v2/${medState.medication_id}/info`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: medQuestion.trim() }),
@@ -842,7 +870,7 @@ function useWorkspaceState() {
           const form = new FormData();
           form.append("file", new Blob(audioChunks.current, { type: "audio/webm" }), "question.webm");
           try {
-            const response = await fetch(`${API_URL}/api/transcribe`, { method: "POST", body: form });
+            const response = await apiFetch(`${API_URL}/api/transcribe`, { method: "POST", body: form });
             const data = await response.json();
             if (!response.ok) throw new Error();
             setPendingTranscript(data.text || "");
@@ -862,8 +890,8 @@ function useWorkspaceState() {
   function clearSession() { setMessages([]); setAnswer(""); setAnswerStatus(""); setQuestion(""); setSources([]); resetDocument(); resetMedication(); handleViewChange("conversation"); }
   function retry() { const last = [...messages].reverse().find((item) => item.role === "user"); if (last) void sendQuestion(undefined, last.content); }
   function copyAnswer() { if (answer) void navigator.clipboard?.writeText(answer); }
-  function readAnswer() { if (!answer) return; void fetch(`${API_URL}/api/speak`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: answer.replace(/[#*_\[\]]/g, "") }) }).then(async (response) => { if (!response.ok) throw new Error(); const audio = new Audio(URL.createObjectURL(await response.blob())); await audio.play(); }).catch(() => setError("Spoken output is unavailable right now.")); }
-  async function translateAnswer(target: string) { if (!answer) return; setLoadingStage(`Translating to ${target}...`); try { const response = await fetch(`${API_URL}/api/translate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: answer, language: target }) }); const data = await response.json(); if (!response.ok) throw new Error(); setAnswer(data.text || answer); setLanguage(target); } catch { setError("MediGuide could not translate this answer right now."); } finally { setLoadingStage(""); } }
+  function readAnswer() { if (!answer) return; void apiFetch(`${API_URL}/api/speak`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: answer.replace(/[#*_\[\]]/g, "") }) }).then(async (response) => { if (!response.ok) throw new Error(); const audio = new Audio(URL.createObjectURL(await response.blob())); await audio.play(); }).catch(() => setError("Spoken output is unavailable right now.")); }
+  async function translateAnswer(target: string) { if (!answer) return; setLoadingStage(`Translating to ${target}...`); try { const response = await apiFetch(`${API_URL}/api/translate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: answer, language: target }) }); const data = await response.json(); if (!response.ok) throw new Error(); setAnswer(data.text || answer); setLanguage(target); } catch { setError("MediGuide could not translate this answer right now."); } finally { setLoadingStage(""); } }
   function generateVisitSummary() { const summary = Object.entries(visitFields).filter(([, value]) => value.trim()).map(([key, value]) => `${key}: ${value}`).join("\n\n"); setQuestion(`Help me prepare questions for a healthcare professional using these patient-provided notes:\n\n${summary}`); handleViewChange("conversation"); }
 
   const handleViewChange = (nextView: View) => { router.push(`/workspace/${VIEW_TO_PATH[nextView]}`); setMobileNavOpen(false); };
@@ -999,6 +1027,7 @@ function useWorkspaceState() {
     confirmDocument,
     explainDocument,
     resetDocument,
+    deleteDocument,
     onDrop,
     onFileChange,
     resetMedication,

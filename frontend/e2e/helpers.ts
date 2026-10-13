@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import fs from "node:fs";
 import type { Page } from "@playwright/test";
+import { E2E_OWNER_FILE } from "./auth-paths";
 
 /** The sidebar's "Imaging" nav button — scoped to <aside> because several
  * in-view "back to Imaging" buttons also render the bare text "Imaging". */
@@ -15,6 +17,8 @@ const PYTHON = path.join(REPO_ROOT, ".venv", "Scripts", "python.exe");
 function scratchEnv() {
   return {
     ...process.env,
+    // Seed scripts own their rows as the suite guest (see auth.setup.ts).
+    MEDIGUIDE_SEED_OWNER_ID: fs.existsSync(E2E_OWNER_FILE) ? fs.readFileSync(E2E_OWNER_FILE, "utf8").trim() : "",
     DATABASE_URL: `sqlite:///${path.join(SCRATCH_DIR, "e2e.db").replace(/\\/g, "/")}`,
     PYTHONPATH: REPO_ROOT,
   };

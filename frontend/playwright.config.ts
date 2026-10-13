@@ -1,9 +1,10 @@
 import { defineConfig } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import { E2E_BACKEND_PORT, E2E_FRONTEND_PORT, E2E_STORAGE_STATE } from "./e2e/auth-paths";
 
-const BACKEND_PORT = 8199;
-const FRONTEND_PORT = 3199;
+const BACKEND_PORT = E2E_BACKEND_PORT;
+const FRONTEND_PORT = E2E_FRONTEND_PORT;
 const REPO_ROOT = path.resolve(__dirname, "..");
 const SCRATCH_DIR = path.join(__dirname, "e2e", ".scratch");
 
@@ -52,6 +53,15 @@ export default defineConfig({
     trace: "retain-on-failure",
     viewport: { width: 1280, height: 800 },
   },
+  projects: [
+    { name: "setup", testMatch: /auth.setup.ts/ },
+    {
+      name: "workspace",
+      dependencies: ["setup"],
+      testIgnore: /auth.setup.ts/,
+      use: { storageState: E2E_STORAGE_STATE },
+    },
+  ],
   webServer: [
     {
       command: `"${path.join(REPO_ROOT, ".venv", "Scripts", "python.exe")}" -m uvicorn api:app --host 127.0.0.1 --port ${BACKEND_PORT}`,

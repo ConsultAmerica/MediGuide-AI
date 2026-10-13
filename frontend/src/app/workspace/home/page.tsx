@@ -8,6 +8,7 @@ import { Button, LoadState, MetricCard } from "../polish-ui";
 import { useWorkspaceContext } from "../_state/WorkspaceStateProvider";
 import { API_URL, type DocSession, type LabPoint } from "../_state/workspace-shared";
 import type { TimelineCategory, TimelineEntry } from "../_state/timeline-types";
+import { apiFetch } from "../../../lib/auth";
 
 type ImagingStudySummary = { study_id: string; modality: string; body_region: string; study_date: string | null; verification_status: string };
 
@@ -19,7 +20,7 @@ const CATEGORY_LABELS: Record<TimelineCategory, string> = {
 };
 
 async function fetchJson<T>(path: string, key: string): Promise<T[]> {
-  const response = await fetch(`${API_URL}${path}`);
+  const response = await apiFetch(`${API_URL}${path}`);
   if (!response.ok) throw new Error(`Could not load ${key}.`);
   const data = await response.json();
   return data[key] || [];

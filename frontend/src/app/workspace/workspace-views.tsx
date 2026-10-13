@@ -43,6 +43,7 @@ import {
   type View,
   type AnswerStatus,
 } from "./_state/workspace-shared";
+import { AuthImage } from "./_components/AuthImage";
 export function Conversation({ answer, status, streaming, sources, messages, loading, error, selectedSource, setSelectedSource, onRetry, onPreset, onOpenView, onOpenDocumentPage, onUpload, onAction }: { answer: string; status: AnswerStatus; streaming: boolean; sources: Source[]; question: string; messages: Message[]; loading: string; error: string; selectedSource: number | null; setSelectedSource: (value: number | null) => void; onRetry: () => void; onPreset: (prompt: string) => void; onOpenView: (view: View) => void; onOpenDocumentPage: (page: number) => void; onUpload: () => void; onAction: (action: "copy" | "listen" | "simple" | "questions") => void }) {
   const lastQuestion = [...messages].reverse().find((item) => item.role === "user");
   const empty = !answer && !loading && !lastQuestion;
@@ -459,7 +460,7 @@ export function Documents({
     <div className="extraction-grid doc-review-grid">
       <div className="document-preview doc-page-preview">
         <p className="panel-kicker">ORIGINAL REPORT · PAGE {docSelectedPage}</p>
-        {activePreview?.preview_url ? <img src={`${apiUrl}${activePreview.preview_url}`} alt={`Page ${docSelectedPage} preview`} style={{ transform: `scale(${previewZoom})`, transformOrigin: "top center" }} /> : <div className="doc-preview-placeholder"><FileText size={38} /><span>Page {docSelectedPage} preview</span></div>}
+        {activePreview?.preview_url ? <AuthImage src={`${apiUrl}${activePreview.preview_url}`} alt={`Page ${docSelectedPage} preview`} style={{ transform: `scale(${previewZoom})`, transformOrigin: "top center" }} /> : <div className="doc-preview-placeholder"><FileText size={38} /><span>Page {docSelectedPage} preview</span></div>}
         <small>Check names, values, units, dates, and reference ranges against the source page</small>
       </div>
 
@@ -642,7 +643,7 @@ export function Medication({
 
     <div className="extraction-grid doc-review-grid">
       <div className="document-preview doc-page-preview">
-        {medState.source === "upload" ? <img src={`${apiUrl}${medState.preview_url}`} alt="Label preview" /> : <Pill size={38} />}
+        {medState.source === "upload" ? <AuthImage src={`${apiUrl}${medState.preview_url}`} alt="Label preview" /> : <Pill size={38} />}
         <small>Check the medication name, strength, and directions</small>
       </div>
 
@@ -1030,7 +1031,7 @@ export function SystemStatusView({ status, health, onRetry }: { status: SystemSt
     }
   }
   const preferred = ["Document storage", "Document processing", "Document preview", "AI-assisted extraction", "Imaging reports", "Medication labels", "Educational explanations", "Voice transcription", "Voice playback"];
-  const components = preferred.map((name) => byLabel.get(name) || { name, key: name, status: "ready", detail: "Service status" });
+  const components = preferred.map((name) => byLabel.get(name) || { name, key: name, status: "unknown", detail: "Not reported by the service" });
   const limited = components.some((component) => friendlyComponentStatus(component.status, component.detail) === "Limited" || friendlyComponentStatus(component.status, component.detail) === "Unavailable");
   return <div className="workflow-view system-status-view">
     <p className="eyebrow">SYSTEM</p>
@@ -1070,16 +1071,16 @@ export function Sources({ sources, library, onSelect }: { sources: Source[]; lib
 export function Privacy({ onClose, onClear }: { onClose: () => void; onClear: () => void }) {
   return (
     <Drawer onClose={onClose} eyebrow="PRIVACY" title="Privacy-conscious processing.">
-      <p>MediGuide is an educational prototype. Session uploads and temporary files are designed to stay under user control.</p>
+      <p>MediGuide is an educational prototype. Your uploads and the records confirmed from them belong to your account, and no other account can open them.</p>
       <ul>
-        <li><Check size={16} /> User-controlled uploads</li>
-        <li><Check size={16} /> Clear-session controls</li>
-        <li><Check size={16} /> Document deletion from the current session</li>
+        <li><Check size={16} /> Records visible only to your account</li>
+        <li><Check size={16} /> Original files kept so every value links back to its source page</li>
+        <li><Check size={16} /> Permanent deletion of a document, its previews, and its lab results</li>
         <li><Check size={16} /> Educational use only</li>
         <li><Check size={16} /> No advertising profile</li>
       </ul>
       <div className="drawer-warning"><strong>Public demo mode</strong><span>Do not enter identifying health information.</span></div>
-      <button className="drawer-action" onClick={onClear}><Trash2 size={16} /> Clear session</button>
+      <button className="drawer-action" onClick={onClear}><Trash2 size={16} /> Clear this screen</button>
       <button className="drawer-action secondary" onClick={() => { try { window.sessionStorage.removeItem(VISIT_STORAGE_KEY); } catch { /* ignore */ } onClear(); }}><RefreshCw size={16} /> Clear temporary session data</button>
     </Drawer>
   );

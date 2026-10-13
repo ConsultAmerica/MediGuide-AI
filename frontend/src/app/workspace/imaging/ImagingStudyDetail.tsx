@@ -19,6 +19,7 @@ import { ImagingNoReportEmptyState } from "./ImagingEmptyState";
 import { ImagingProcessingState } from "./ImagingProcessingState";
 import { ImagingProcessingFailedState } from "./ImagingErrorState";
 import { reportPagePreviewUrl } from "./imaging-api";
+import { AuthImage } from "../_components/AuthImage";
 
 type DetailTab = "overview" | "report" | "images" | "explanation" | "source";
 
@@ -133,7 +134,10 @@ export function ImagingStudyDetail({
     setSelectedPage(pageNumber);
     setTab("source");
     setViewerExpanded(true);
-    if (documentId) onOpenSourceDocument(documentId, pageNumber);
+    // A finding from this study's own report is shown right here, on the
+    // Source tab. Imaging reports have no Documents review session, so
+    // routing them to /workspace/documents would only reach a 404.
+    if (documentId && documentId !== study.report_document_id) onOpenSourceDocument(documentId, pageNumber);
   }
 
   return (
@@ -229,7 +233,7 @@ export function ImagingStudyDetail({
             <div className="extraction-grid imaging-detail-grid">
               <div className="document-preview imaging-viewer">
                 {showPreviewImage ? (
-                  <img src={previewUrl} alt={`Page ${selectedPage}`} onError={() => setPreviewFailed(true)} />
+                  <AuthImage src={previewUrl} alt={`Page ${selectedPage}`} onError={() => setPreviewFailed(true)} />
                 ) : (
                   <span>No preview is available for this page.</span>
                 )}
@@ -286,7 +290,7 @@ export function ImagingStudyDetail({
               </p>
               <div className="document-preview imaging-viewer imaging-viewer-full">
                 {showPreviewImage ? (
-                  <img src={previewUrl} alt={`Page ${selectedPage}`} onError={() => setPreviewFailed(true)} />
+                  <AuthImage src={previewUrl} alt={`Page ${selectedPage}`} onError={() => setPreviewFailed(true)} />
                 ) : (
                   <span>No preview is available for this page.</span>
                 )}

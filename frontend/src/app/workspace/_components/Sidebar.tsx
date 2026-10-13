@@ -7,8 +7,8 @@ import {
   BookOpen,
   FileText,
   FlaskConical,
-  Folder,
   Home as HomeIcon,
+  LogOut,
   Milestone,
   Pill,
   PlayCircle,
@@ -19,7 +19,9 @@ import {
   X,
 } from "lucide-react";
 import { BrandLogo } from "../../brand-logo";
+import Link from "next/link";
 import { useWorkspaceContext } from "../_state/WorkspaceStateProvider";
+import { useAccount } from "./AuthGate";
 
 function NavItem({
   href,
@@ -39,6 +41,7 @@ function NavItem({
   return (
     <button
       className={`nav-item${active ? " active" : ""}${primary ? " nav-item-primary" : ""}`}
+      aria-current={active ? "page" : undefined}
       onClick={() => onNavigate(href)}
     >
       <Icon size={17} />{label}
@@ -91,9 +94,6 @@ export function Sidebar({ onClose }: { onClose: () => void }) {
       <nav>
         <NavItem href="/workspace/ask" label="Ask MediGuide" icon={HomeIcon} onNavigate={navigate} />
         <NavItem href="/workspace/visit" label="Visit Preparation" icon={Stethoscope} onNavigate={navigate} />
-        <button className="nav-item nav-item-disabled" disabled title="Coming soon">
-          <Folder size={17} /> Collections <small>Soon</small>
-        </button>
       </nav>
 
       <div className="sidebar-label knowledge-label">KNOWLEDGE</div>
@@ -107,13 +107,28 @@ export function Sidebar({ onClose }: { onClose: () => void }) {
         <NavItem href="/workspace/system" label="System Status" icon={Activity} onNavigate={navigate} />
       </nav>
 
-      <div className="sidebar-footer">
-        <span className="status-dot" />
-        <div>
-          <strong>Document → Source</strong>
-          <small>Verify, timeline, then trace</small>
-        </div>
-      </div>
+      <AccountFooter />
     </aside>
+  );
+}
+
+function AccountFooter() {
+  const { user, signOut } = useAccount();
+  const label = user.is_guest ? "Guest workspace" : user.display_name || user.email;
+  return (
+    <div className="sidebar-footer sidebar-account">
+      <div className="sidebar-account-who">
+        <strong title={user.email || undefined}>{label}</strong>
+        <small>{user.is_guest ? "Only you can see these records" : user.email}</small>
+      </div>
+      {user.is_guest && (
+        <Link className="sidebar-account-save" href="/signin?mode=register&next=/workspace/home">
+          Save to an account
+        </Link>
+      )}
+      <button type="button" className="quiet-button sidebar-account-signout" onClick={() => void signOut()}>
+        <LogOut size={15} aria-hidden /> Sign out
+      </button>
+    </div>
   );
 }

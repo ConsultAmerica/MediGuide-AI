@@ -37,7 +37,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     clearSession,
     toasts, setToasts,
     confirmDeleteObservationId, setConfirmDeleteObservationId, deleteLabObservation,
-    confirmResetDocument, setConfirmResetDocument, resetDocument,
+    confirmResetDocument, setConfirmResetDocument, deleteDocument,
     pushToast,
     fileInput, medFileInput, onFileChange, onMedFileChange,
     question, setQuestion, sendQuestion, handleComposerKey, toggleVoice, recording, loadingStage,
@@ -142,11 +142,11 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       <ConfirmDialog
         open={confirmResetDocument}
         title="Clear this document?"
-        body="This will remove the uploaded document and associated extracted information from the current MediGuide session."
+        body="This permanently deletes the uploaded file, its page previews, and any lab results confirmed from it. This can't be undone."
         confirmLabel="Delete document"
         destructive
         onCancel={() => setConfirmResetDocument(false)}
-        onConfirm={() => { setConfirmResetDocument(false); resetDocument(); router.push("/workspace/documents"); pushToast("Document cleared from session", "info"); }}
+        onConfirm={() => { setConfirmResetDocument(false); void deleteDocument().then((deleted) => { if (deleted) { router.push("/workspace/documents"); pushToast("Document deleted", "info"); } }); }}
       />
       {privacyOpen && <Privacy onClose={() => setPrivacyOpen(false)} onClear={clearSession} />}
       {helpOpen && <HelpDrawer onClose={() => setHelpOpen(false)} onOpenView={(next) => { setHelpOpen(false); handleViewChange(next); }} />}

@@ -3,6 +3,7 @@
 // WorkspaceApp.tsx so both sides of the state/view split can import them.
 
 import { BookOpen, FileText, Stethoscope } from "lucide-react";
+import { API_BASE_URL } from "../../../lib/auth";
 
 export type Source = { number: number; title: string; publisher: string; published?: string; reviewed?: string; url?: string; passage?: string };
 export type LibrarySource = { id: string; title: string; publisher: string; url?: string; published?: string; reviewed?: string; type?: string };
@@ -110,7 +111,7 @@ export async function* readSseEvents(response: Response): AsyncGenerator<SseEven
   }
 }
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : "");
+export const API_URL = API_BASE_URL;
 export const API_CONFIGURATION_MESSAGE = "The deployed frontend has no AI service URL. Set NEXT_PUBLIC_API_URL to the HTTPS address of the FastAPI backend and redeploy.";
 export const quickActions = [
   ["Blood pressure", "Systolic, diastolic, and why it matters.", BookOpen, "What is blood pressure?"],

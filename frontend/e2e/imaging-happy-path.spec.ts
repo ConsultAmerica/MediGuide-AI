@@ -12,6 +12,9 @@ test.beforeAll(() => {
 
 test.describe("Imaging — canonical happy path", () => {
   test("open Imaging, add a study, review, confirm, compare, and explain a term", async ({ page }) => {
+    // Unique per run: other specs share this scratch database and also create
+    // undated MRI studies, so "Undated" alone can pick the wrong one.
+    const BODY_REGION = `Right knee ${Date.now()}`;
     const reportPath = path.join(FIXTURES_DIR, "happy-path-report.pdf");
     generateReportPdf(reportPath, {
       exam: "MRI Right Knee",
@@ -43,7 +46,7 @@ test.describe("Imaging — canonical happy path", () => {
     // Add synthetic MRI study
     await page.getByRole("button", { name: "Add imaging study" }).click();
     await page.locator(".imaging-add-form select").selectOption("mri");
-    await page.getByPlaceholder("e.g. Right knee").fill("Right knee");
+    await page.getByPlaceholder("e.g. Right knee").fill(BODY_REGION);
     await page.getByRole("button", { name: "Create study" }).click();
     await expect(page.locator(".imaging-study-meta")).toContainText("MRI");
 
@@ -72,9 +75,12 @@ test.describe("Imaging — canonical happy path", () => {
     await expect(page.locator(".lab-verified")).toContainText("Verified");
 
     // View source page
+    // Opens the study's Source tab on that page; the preview is fetched with
+    // the session token (a bare <img src> would be rejected as unauthenticated).
     await page.getByRole("button", { name: "View source page" }).first().click();
-    await expect(page.getByRole("button", { name: "Back to report section" })).toBeVisible();
-    await page.getByRole("button", { name: "Back to report section" }).click();
+    await expect(page.locator(".imaging-source-banner")).toContainText("Opening the correct report page");
+    await expect(page.getByRole("img", { name: "Page 1", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Back", exact: true }).click();
 
     // Return to Imaging history
     await page.getByRole("button", { name: "View history" }).click();
@@ -90,14 +96,12 @@ test.describe("Imaging — canonical happy path", () => {
     await compareButtons.last().click();
     await expect(page.getByRole("heading", { name: "Compare Imaging Reports" })).toBeVisible();
 
-    // Later report is the freshly created + confirmed study — it has no
-    // study_date set (the form was filled without one), so "Undated" is
-    // the unambiguous way to pick it out from the seeded, dated studies.
-    // selectOption's {label} match requires an exact string (no regex), so
-    // the option's real text is read first.
+    // Later report is the freshly created + confirmed study, picked by its
+    // unique body region. selectOption's {label} match requires an exact
+    // string (no regex), so the option's real text is read first.
     const laterSelect = page.locator(".imaging-compare-picker select").nth(1);
-    const undatedLabel = await laterSelect.locator("option", { hasText: "Undated" }).first().textContent();
-    await laterSelect.selectOption({ label: (undatedLabel ?? "").trim() });
+    const laterLabel = await laterSelect.locator("option", { hasText: BODY_REGION }).first().textContent();
+    await laterSelect.selectOption({ label: (laterLabel ?? "").trim() });
     await page.getByRole("button", { name: "What changed?" }).click();
     await expect(page.locator(".imaging-compare-section").first()).toBeVisible({ timeout: 15_000 });
 
@@ -112,9 +116,8 @@ test.describe("Imaging — canonical happy path", () => {
     // Open source evidence from a comparison row
     await findingsCompareSection.getByRole("button", { name: "View later source" }).click();
     await expect(page.locator(".imaging-study-meta")).toBeVisible();
-    // Viewing source opens the full-screen viewer — return to the split
-    // report view before looking for report-panel actions.
-    await page.getByRole("button", { name: "Back to report section" }).click();
+    // Report-panel actions live on the study's Report tab.
+    await page.getByRole("navigation", { name: "Study sections" }).getByRole("button", { name: "Report" }).click();
 
     // Open terminology explanation
     await page.getByRole("button", { name: "Understand terminology" }).first().click();

@@ -117,6 +117,8 @@ test.describe("Global search — Cmd/Ctrl+K", () => {
 
     test("search opens as a full-screen sheet with a visible trigger", async ({ page }) => {
       await page.goto("/workspace/home");
+      // The shell (and its Ctrl+K listener) mounts once the session check resolves.
+      await expect(page.locator(".app-header")).toBeVisible();
       await page.keyboard.press("Control+k");
       const input = page.getByRole("combobox", { name: "Search your health information" });
       await expect(input).toBeFocused();

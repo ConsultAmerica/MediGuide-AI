@@ -6,6 +6,8 @@
  * endpoint that hasn't been migrated yet, so callers never need to know
  * which shape a given response uses.
  */
+import { apiFetch } from "./auth";
+
 export interface ApiError {
   code: string;
   message: string;
@@ -16,13 +18,13 @@ export interface ApiError {
 export async function parseApiError(response: Response, fallbackMessage: string): Promise<ApiError> {
   const body = await response.json().catch(() => null);
 
-  const envelope = (body as { error?: Partial<ApiError> } | null)?.error;
+  const envelope = (body as { error?: Partial<ApiError> & { request_id?: string } } | null)?.error;
   if (envelope && typeof envelope.message === "string") {
     return {
       code: envelope.code || "REQUEST_FAILED",
       message: envelope.message,
       retryable: Boolean(envelope.retryable),
-      requestId: envelope.requestId || response.headers.get("x-request-id") || "",
+      requestId: envelope.request_id || envelope.requestId || response.headers.get("x-request-id") || "",
     };
   }
 
@@ -59,7 +61,7 @@ export async function fetchWithTimeout(
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await apiFetch(input, { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new TimeoutError();
