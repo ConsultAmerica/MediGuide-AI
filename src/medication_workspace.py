@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pymupdf
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from PIL import Image
@@ -31,6 +31,8 @@ from src.database.medication_repository import (
     get_medication_record,
     serialize_medication_record,
 )
+from src.auth.dependencies import not_found, require_user
+from src.database.models import User
 from src.database.session import session_scope
 from src.document_intelligence import EvidenceSource, retrieve_approved_evidence
 from src.image_validator import prepare_vision_image, validate_image_file
@@ -146,6 +148,30 @@ def _load_state(medication_id: str) -> MedicationState:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Medication session not found.")
     return MedicationState.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _owner_path(medication_id: str) -> Path:
+    return _folder(medication_id) / "owner"
+
+
+def _claim_folder(medication_id: str, user: User) -> Path:
+    """Creates the session folder and records who owns it. Review sessions
+    live on disk rather than in the database until confirmed, so the owner
+    is stored alongside them."""
+    folder = _folder(medication_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    _owner_path(medication_id).write_text(user.id, encoding="utf-8")
+    return folder
+
+
+def _load_owned_state(medication_id: str, user: User) -> MedicationState:
+    try:
+        owner = _owner_path(medication_id).read_text(encoding="utf-8").strip()
+    except OSError:
+        owner = ""
+    if owner != user.id:
+        raise not_found("Medication session")
+    return _load_state(medication_id)
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -370,7 +396,7 @@ async def _ingest_image(file: UploadFile, folder: Path) -> Path:
 
 
 @router.post("/upload", response_model=MedicationState)
-async def upload(file: UploadFile = File(...)) -> MedicationState:
+async def upload(file: UploadFile = File(...), user: User = Depends(require_user)) -> MedicationState:
     _cleanup_expired_sessions()
 
     suffix = Path(file.filename or "").suffix.lower()
@@ -385,8 +411,7 @@ async def upload(file: UploadFile = File(...)) -> MedicationState:
         )
 
     medication_id = uuid.uuid4().hex
-    folder = _folder(medication_id)
-    folder.mkdir(parents=True, exist_ok=True)
+    folder = _claim_folder(medication_id, user)
 
     try:
         preview = await (_ingest_pdf(file, folder) if suffix == ".pdf" else _ingest_image(file, folder))
@@ -420,12 +445,11 @@ async def upload(file: UploadFile = File(...)) -> MedicationState:
 
 
 @router.post("/text", response_model=MedicationState)
-async def upload_typed(request: TypedLabelRequest) -> MedicationState:
+async def upload_typed(request: TypedLabelRequest, user: User = Depends(require_user)) -> MedicationState:
     _cleanup_expired_sessions()
 
     medication_id = uuid.uuid4().hex
-    folder = _folder(medication_id)
-    folder.mkdir(parents=True, exist_ok=True)
+    folder = _claim_folder(medication_id, user)
 
     try:
         fields, other_text = await run_in_threadpool(_extract_from_text, request.text)
@@ -454,13 +478,13 @@ async def upload_typed(request: TypedLabelRequest) -> MedicationState:
 
 
 @router.get("/{medication_id}", response_model=MedicationState)
-async def get_medication(medication_id: str) -> MedicationState:
-    return _load_state(medication_id)
+async def get_medication(medication_id: str, user: User = Depends(require_user)) -> MedicationState:
+    return _load_owned_state(medication_id, user)
 
 
 @router.get("/{medication_id}/preview")
-async def preview(medication_id: str):
-    state = _load_state(medication_id)
+async def preview(medication_id: str, user: User = Depends(require_user)):
+    state = _load_owned_state(medication_id, user)
     if state.source != "upload":
         raise HTTPException(status_code=404, detail="This entry has no image preview.")
     path = _folder(medication_id) / "preview.png"
@@ -470,8 +494,14 @@ async def preview(medication_id: str):
 
 
 @router.post("/{medication_id}/confirm")
-async def confirm(medication_id: str, request: ConfirmRequest):
-    state = _load_state(medication_id)
+async def confirm(medication_id: str, request: ConfirmRequest, user: User = Depends(require_user)):
+    state = _load_owned_state(medication_id, user)
+    if state.confirmed:
+        raise MediGuideError(
+            "MEDICATION_ALREADY_CONFIRMED",
+            "This medication was already confirmed. Its saved details are kept as they were.",
+            status_code=409,
+        )
 
     if not request.reviewed_name_strength_instructions:
         raise HTTPException(
@@ -490,15 +520,10 @@ async def confirm(medication_id: str, request: ConfirmRequest):
             detail="Medication name is required before confirming.",
         )
 
-    state.fields = [field.model_copy(update={"user_edited": True}) for field in request.fields]
-    state.confirmed = True
-    state.status = "confirmed"
-    _save_state(state)
-
-    # Best-effort, mirrors document_intelligence.py's confirm(): the
-    # session-based review/confirm flow must succeed even if the DB write
-    # fails. This is what lets a confirmed medication appear in the
-    # Unified Health Timeline after the session's temp files expire.
+    # The database row comes first: it is what lets a confirmed medication
+    # appear in the Unified Health Timeline after the session's temp files
+    # expire. If it can't be written, the session stays unconfirmed so the
+    # user can retry, instead of showing a confirmation that went nowhere.
     try:
         values = {key: (by_key[key].value if key in by_key else "") for key in MED_FIELD_ORDER}
         with session_scope() as session:
@@ -514,23 +539,36 @@ async def confirm(medication_id: str, request: ConfirmRequest):
                 source=state.source,
                 filename=state.filename,
                 other_visible_text=state.other_visible_text,
+                owner_id=user.id,
             )
     except Exception as error:
         logger.warning(
             "medication_persist_failed",
             extra={"medication_id": medication_id, "error_type": type(error).__name__},
         )
+        raise MediGuideError(
+            "CONFIRMATION_NOT_SAVED",
+            "This medication wasn't saved, so nothing changed. Please try confirming again.",
+            status_code=503,
+            retryable=True,
+            technical_detail=f"{type(error).__name__}: {error}",
+        ) from error
+
+    state.fields = [field.model_copy(update={"user_edited": True}) for field in request.fields]
+    state.confirmed = True
+    state.status = "confirmed"
+    _save_state(state)
 
     return {"medication_id": medication_id, "confirmed": True, "fields": state.fields}
 
 
 @router.get("/{medication_id}/record")
-async def get_medication_record_endpoint(medication_id: str) -> dict[str, Any]:
+async def get_medication_record_endpoint(medication_id: str, user: User = Depends(require_user)) -> dict[str, Any]:
     """Read-only, persisted view of a confirmed medication — powers the
     Unified Health Timeline's "View medication" drawer independently of
     the session-based upload/review flow (which expires)."""
     with session_scope() as session:
-        record = get_medication_record(session, medication_id)
+        record = get_medication_record(session, medication_id, user.id)
         if record is None:
             raise HTTPException(
                 status_code=404,
@@ -546,8 +584,10 @@ def _confirmed_context(fields: list[MedicationField]) -> str:
 
 
 @router.post("/{medication_id}/info", response_model=MedicationInfoResponse)
-async def info(medication_id: str, request: InfoRequest) -> MedicationInfoResponse:
-    state = _load_state(medication_id)
+async def info(
+    medication_id: str, request: InfoRequest, user: User = Depends(require_user)
+) -> MedicationInfoResponse:
+    state = _load_owned_state(medication_id, user)
 
     if not state.confirmed:
         raise HTTPException(

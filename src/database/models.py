@@ -25,11 +25,55 @@ def _uuid() -> str:
     return str(uuid4())
 
 
+class User(Base):
+    """An account that owns health records.
+
+    Guest users (is_guest=True) have no email/password — they exist so the
+    synthetic demo keeps working without sign-up while still getting the
+    same per-owner isolation as a registered account.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    email: Mapped[Optional[str]] = mapped_column(String(320), nullable=True, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(256), default="")
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    is_guest: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AuthSession(Base):
+    """A bearer session. Only the SHA-256 of the token is stored, so a
+    leaked database row cannot be replayed as a credential."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Nullable only so pre-ownership rows survive the migration; every row
+    # written since is owned, and unowned rows are invisible to every user
+    # until claimed (see scripts/claim_legacy_records.py).
+    owner_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     content_type: Mapped[str] = mapped_column(String(128), default="")
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(64), default="uploaded")
@@ -218,6 +262,12 @@ class ImagingStudy(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     modality: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    # Nullable only so pre-ownership rows survive the migration; every row
+    # written since is owned, and unowned rows are invisible to every user
+    # until claimed (see scripts/claim_legacy_records.py).
+    owner_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     body_region: Mapped[str] = mapped_column(String(128), default="")
     study_description: Mapped[str] = mapped_column(String(256), default="")
     study_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
@@ -395,6 +445,12 @@ class MedicationRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     medication_name: Mapped[str] = mapped_column(String(256), default="", index=True)
+    # Nullable only so pre-ownership rows survive the migration; every row
+    # written since is owned, and unowned rows are invisible to every user
+    # until claimed (see scripts/claim_legacy_records.py).
+    owner_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     strength: Mapped[str] = mapped_column(String(128), default="")
     form: Mapped[str] = mapped_column(String(128), default="")
     instructions: Mapped[str] = mapped_column(Text, default="")

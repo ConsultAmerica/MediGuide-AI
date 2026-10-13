@@ -76,7 +76,9 @@ def _measurements(observations: list[LabObservation]) -> list[dict[str, Any]]:
     ]
 
 
-def get_timeline_entries(session: Session) -> list[dict[str, Any]]:
+def get_timeline_entries(session: Session, *, owner_id: str | None) -> list[dict[str, Any]]:
+    """Every verified entry belonging to ``owner_id``. Required on purpose:
+    None selects only unowned legacy rows, never everyone's."""
     entries: list[dict[str, Any]] = []
 
     # Imaging: verification_status == "verified" is the same gate Imaging
@@ -84,6 +86,7 @@ def get_timeline_entries(session: Session) -> list[dict[str, Any]]:
     imaging_studies = list(
         session.execute(
             select(ImagingStudy).where(
+                ImagingStudy.owner_id == owner_id,
                 ImagingStudy.verification_status == "verified",
                 ImagingStudy.report_document_id.isnot(None),
             )
@@ -119,7 +122,7 @@ def get_timeline_entries(session: Session) -> list[dict[str, Any]]:
     # verification_state="confirmed" (upsert_confirmed_document), so their
     # mere presence already means confirmed — no extra filter needed.
     documents = list(
-        session.execute(select(Document).where(Document.confirmed.is_(True))).scalars().all()
+        session.execute(select(Document).where(Document.owner_id == owner_id, Document.confirmed.is_(True))).scalars().all()
     )
 
     for document in documents:
@@ -182,7 +185,9 @@ def get_timeline_entries(session: Session) -> list[dict[str, Any]]:
 
     # Medications: a row only ever exists once confirmed (see
     # medication_workspace.py's confirm()), so presence alone means verified.
-    medications = list(session.execute(select(MedicationRecord)).scalars().all())
+    medications = list(session.execute(
+        select(MedicationRecord).where(MedicationRecord.owner_id == owner_id)
+    ).scalars().all())
     for record in medications:
         entries.append({
             "entry_id": f"medication:{record.id}",
@@ -239,6 +244,7 @@ def _entries_after_cursor(entries: list[dict[str, Any]], cursor: str) -> list[di
 def list_timeline_entries(
     session: Session,
     *,
+    owner_id: str | None,
     event_type: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
@@ -253,7 +259,7 @@ def list_timeline_entries(
     query — correct and simple at this app's single-tenant, demo-app scale
     (see module docstring); revisit only if that stops being true.
     """
-    entries = get_timeline_entries(session)
+    entries = get_timeline_entries(session, owner_id=owner_id)
 
     if event_type:
         entries = [entry for entry in entries if entry["event_type"] == event_type]

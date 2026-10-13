@@ -72,6 +72,13 @@ def _ensure_sqlite_columns(engine: Engine) -> None:
         ],
         "imaging_studies": [
             ("pending_report_document_id", "VARCHAR(36)"),
+            ("owner_id", "VARCHAR(36)"),
+        ],
+        "documents": [
+            ("owner_id", "VARCHAR(36)"),
+        ],
+        "medication_records": [
+            ("owner_id", "VARCHAR(36)"),
         ],
     }
     with engine.begin() as connection:

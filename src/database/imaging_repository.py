@@ -52,8 +52,10 @@ def create_study(
     study_date: date | None = None,
     institution: str = "",
     accession_identifier: str = "",
+    owner_id: str | None = None,
 ) -> ImagingStudy:
     study = ImagingStudy(
+        owner_id=owner_id,
         modality=modality,
         body_region=body_region,
         study_description=study_description,
@@ -70,15 +72,23 @@ def get_study(session: Session, study_id: str) -> ImagingStudy | None:
     return session.get(ImagingStudy, study_id)
 
 
+def get_owned_study(session: Session, study_id: str, owner_id: str) -> ImagingStudy | None:
+    study = session.get(ImagingStudy, study_id)
+    if study is None or study.owner_id != owner_id:
+        return None
+    return study
+
+
 def list_studies(
     session: Session,
     *,
+    owner_id: str,
     modality: str | None = None,
     body_region: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> list[ImagingStudy]:
-    stmt = select(ImagingStudy)
+    stmt = select(ImagingStudy).where(ImagingStudy.owner_id == owner_id)
     if modality:
         stmt = stmt.where(ImagingStudy.modality == modality)
     if body_region:
@@ -91,14 +101,15 @@ def list_studies(
     return list(session.execute(stmt).scalars().all())
 
 
-def modality_summary(session: Session) -> list[dict[str, Any]]:
-    rows = session.execute(
-        select(
-            ImagingStudy.modality,
-            func.count(ImagingStudy.id),
-            func.max(ImagingStudy.study_date),
-        ).group_by(ImagingStudy.modality)
-    ).all()
+def modality_summary(session: Session, owner_id: str | None) -> list[dict[str, Any]]:
+    stmt = select(
+        ImagingStudy.modality,
+        func.count(ImagingStudy.id),
+        func.max(ImagingStudy.study_date),
+    )
+    if owner_id is not None:
+        stmt = stmt.where(ImagingStudy.owner_id == owner_id)
+    rows = session.execute(stmt.group_by(ImagingStudy.modality)).all()
     return [
         {
             "modality": modality,
@@ -318,10 +329,18 @@ def upsert_findings_from_sections(
 
 
 def get_findings(session: Session, study_id: str) -> list[ImagingFinding]:
+    """Findings from the study's current report only — never a mix of an
+    earlier upload's rows with the current one's."""
+    study = session.get(ImagingStudy, study_id)
+    if study is None or not study.report_document_id:
+        return []
     return list(
         session.execute(
             select(ImagingFinding)
-            .where(ImagingFinding.study_id == study_id)
+            .where(
+                ImagingFinding.study_id == study_id,
+                ImagingFinding.document_id == study.report_document_id,
+            )
             .order_by(ImagingFinding.ordinal, ImagingFinding.created_at)
         ).scalars().all()
     )

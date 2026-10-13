@@ -5,14 +5,26 @@ ImagingReportSection rows directly, clearly labeled as synthetic. Like the
 lab seed script, no real page-preview image files are written — only
 metadata — so "View original report" on a seeded study will not have a
 preview image, matching the lab seed's own limitation.
+
+Rows are owned by the account in MEDIGUIDE_SEED_OWNER_ID (a user id). Without
+it they are written unowned, and unowned rows are visible to no account.
 """
 
 from __future__ import annotations
 
+import os
 from datetime import date
 
 from src.database.models import Document, ImagingReportSection, ImagingStudy
 from src.database.session import init_db, session_scope
+
+
+def _seed_owner_id() -> str | None:
+    owner_id = os.getenv("MEDIGUIDE_SEED_OWNER_ID", "").strip() or None
+    if owner_id is None:
+        print("warning: MEDIGUIDE_SEED_OWNER_ID is not set; seeded rows will be visible to no account")
+    return owner_id
+
 
 PROCESSOR_VERSION = "demo-seed-v1"
 
@@ -63,10 +75,12 @@ STUDIES = [
 
 def main() -> None:
     init_db()
+    owner_id = _seed_owner_id()
     created = 0
     with session_scope() as session:
         for entry in STUDIES:
             document = Document(
+                owner_id=owner_id,
                 filename=f"Demo_{entry['modality'].upper()}_Report_{entry['study_date'].isoformat()}.pdf",
                 page_count=1,
                 status="confirmed",
@@ -77,6 +91,7 @@ def main() -> None:
             session.flush()
 
             study = ImagingStudy(
+                owner_id=owner_id,
                 modality=entry["modality"],
                 body_region=entry["body_region"],
                 study_description=entry["study_description"],

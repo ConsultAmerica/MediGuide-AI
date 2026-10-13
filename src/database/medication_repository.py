@@ -36,13 +36,14 @@ def create_medication_record(
     source: str = "upload",
     filename: str = "",
     other_visible_text: str = "",
+    owner_id: str | None = None,
 ) -> MedicationRecord:
     """Idempotent on medication_id — a re-confirm updates the same row
     rather than accumulating duplicates, matching every other confirm-time
     upsert in this app (ExtractedField, ImagingReportSection)."""
     record = session.get(MedicationRecord, medication_id)
     if record is None:
-        record = MedicationRecord(id=medication_id)
+        record = MedicationRecord(id=medication_id, owner_id=owner_id)
         session.add(record)
     record.medication_name = medication_name
     record.strength = strength
@@ -57,5 +58,10 @@ def create_medication_record(
     return record
 
 
-def get_medication_record(session: Session, medication_id: str) -> MedicationRecord | None:
-    return session.get(MedicationRecord, medication_id)
+def get_medication_record(
+    session: Session, medication_id: str, owner_id: str
+) -> MedicationRecord | None:
+    record = session.get(MedicationRecord, medication_id)
+    if record is None or record.owner_id != owner_id:
+        return None
+    return record

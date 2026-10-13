@@ -1,7 +1,12 @@
-"""Seed synthetic verified lab observations for portfolio demos."""
+"""Seed synthetic verified lab observations for portfolio demos.
+
+Rows are owned by the account in MEDIGUIDE_SEED_OWNER_ID (a user id). Without
+it they are written unowned, and unowned rows are visible to no account.
+"""
 
 from __future__ import annotations
 
+import os
 from datetime import date
 from uuid import uuid4
 
@@ -29,6 +34,9 @@ SAMPLES = [
 
 def main() -> None:
     init_db()
+    owner_id = os.getenv("MEDIGUIDE_SEED_OWNER_ID", "").strip() or None
+    if owner_id is None:
+        print("warning: MEDIGUIDE_SEED_OWNER_ID is not set; seeded rows will be visible to no account")
     with session_scope() as session:
         for index, (
             code,
@@ -45,6 +53,7 @@ def main() -> None:
             filename = f"Sample_Lab_Report_{report_date.isoformat()}.pdf"
             document = Document(
                 id=document_id,
+                owner_id=owner_id,
                 filename=filename,
                 page_count=max(page_number, 1),
                 status="confirmed",

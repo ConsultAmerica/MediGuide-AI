@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from src.agents import MedicalAgentOrchestrator, OrchestratorRequest
 from src.api.labs import router as labs_router
+from src.auth.router import router as auth_router
 from src.config import (
     BASE_DIR,
     CHROMA_COLLECTION_NAME,
@@ -95,6 +96,7 @@ app = FastAPI(title="MediGuide AI API", version="1.2.0")
 
 # These routers already declare their own prefixes — no extra prefix
 # here, or every route (including served page/preview files) breaks.
+app.include_router(auth_router)
 app.include_router(document_intelligence_router)
 app.include_router(medication_workspace_router)
 app.include_router(labs_router)
@@ -517,8 +519,10 @@ def system_status() -> dict[str, object]:
             {
                 "name": "n8n",
                 "key": "n8n",
-                "status": "ready",
-                "detail": "Workflow automation (optional)",
+                # Nothing in the API calls n8n; the n8n/ folder only holds
+                # example workflow exports. Reporting it "ready" was false.
+                "status": "unavailable",
+                "detail": "Not connected in this deployment (optional)",
             },
         ],
         "knowledge": payload.get("knowledge", {}),

@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import pymupdf
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from PIL import Image
@@ -30,7 +30,14 @@ from src.config import (
     RAG_MAX_PASSAGE_WORDS,
     VISION_MODEL_NAME,
 )
-from src.database.repository import create_uploaded_document
+from src.auth.dependencies import not_found, require_user
+from src.database.models import User
+from src.database.repository import (
+    create_uploaded_document,
+    document_exists,
+    get_owned_document,
+    owned_document_ids,
+)
 from src.database.session import session_scope
 from src.image_validator import prepare_vision_image, validate_image_file
 from src.labs.service import create_observations_from_document
@@ -138,8 +145,15 @@ class DocumentStatusResponse(BaseModel):
 
 
 class ConfirmRequest(BaseModel):
+    # Only field_id plus the reviewable text (label/value/unit/
+    # reference_range) is taken from these — page, source text, confidence
+    # and extraction method always come from the server's own extraction,
+    # so a confirm can't rewrite where a value came from.
     fields: list[ExtractedField]
     reviewed_names_values_units_dates: bool
+    # Fields the reviewer rejected; they are left out of the confirmed
+    # record and never become lab observations.
+    excluded_field_ids: list[str] = Field(default_factory=list)
 
 
 class ExplainRequest(BaseModel):
@@ -189,6 +203,16 @@ def _load_state(document_id: str) -> DocumentState:
     return DocumentState.model_validate_json(path.read_text(encoding="utf-8"))
 
 
+def _load_owned_state(document_id: str, user: User) -> DocumentState:
+    """Loads a review session only for its owner. Anyone else gets the same
+    404 as a document that doesn't exist."""
+    with session_scope() as session:
+        owned = get_owned_document(session, document_id, user.id) is not None
+    if not owned:
+        raise not_found("Document")
+    return _load_state(document_id)
+
+
 def _parse_json(text: str) -> dict[str, Any]:
     cleaned = text.strip()
     if cleaned.startswith("```json"):
@@ -206,37 +230,33 @@ def _field_id(page: int, index: int, label: str) -> str:
 
 
 def _cleanup_expired_sessions() -> None:
-    """Best-effort sweep of stale document sessions.
+    """Best-effort sweep of abandoned upload folders.
 
-    There is no background scheduler anywhere in this app, so sessions
-    are swept opportunistically on each upload rather than on a timer.
-    Confirmed sessions are retained longer so lab timeline source-page
-    drill-down can reopen the originating report.
+    Only folders with no Document row are removed: those are uploads whose
+    database write never happened, so nobody can reach them. Every owned
+    document keeps its original file and page previews until the owner
+    deletes it — including failed ones, so "Retry processing" still has
+    the upload, and confirmed ones, so "View source" keeps working.
     """
     if not TEMP_DIR.exists():
         return
 
     cutoff = time.time() - (RETENTION_MINUTES * 60)
-    confirmed_cutoff = time.time() - (RETENTION_MINUTES * 60 * 12)
 
-    for session_dir in TEMP_DIR.iterdir():
-        if not session_dir.is_dir():
-            continue
+    try:
+        with session_scope() as session:
+            candidates = [
+                folder
+                for folder in TEMP_DIR.iterdir()
+                if folder.is_dir() and folder.stat().st_mtime < cutoff
+            ]
+            orphans = [folder for folder in candidates if not document_exists(session, folder.name)]
+    except Exception as error:  # noqa: BLE001 — if the DB is unreachable, delete nothing
+        logger.warning("session_sweep_skipped", extra={"error_type": type(error).__name__})
+        return
 
-        try:
-            state_file = session_dir / "state.json"
-            confirmed = False
-            if state_file.exists():
-                try:
-                    payload = json.loads(state_file.read_text(encoding="utf-8"))
-                    confirmed = bool(payload.get("confirmed"))
-                except (OSError, json.JSONDecodeError):
-                    confirmed = False
-            age_cutoff = confirmed_cutoff if confirmed else cutoff
-            if session_dir.stat().st_mtime < age_cutoff:
-                shutil.rmtree(session_dir, ignore_errors=True)
-        except OSError:
-            continue
+    for folder in orphans:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 _LEADING_NUMBER_PATTERN = re.compile(r"-?\d+(?:\.\d+)?")
@@ -756,13 +776,16 @@ class SessionSummary(BaseModel):
     updated_at: str = ""
 
 
-def _list_document_sessions() -> list[SessionSummary]:
+def _list_document_sessions(user: User) -> list[SessionSummary]:
     if not TEMP_DIR.exists():
         return []
 
+    with session_scope() as session:
+        owned = owned_document_ids(session, user.id)
+
     sessions: list[SessionSummary] = []
-    for folder in TEMP_DIR.iterdir():
-        path = folder / "state.json"
+    for document_id in owned:
+        path = _state_path(document_id)
         if not path.is_file():
             continue
         try:
@@ -786,8 +809,8 @@ def _list_document_sessions() -> list[SessionSummary]:
 
 
 @router.get("/sessions")
-async def list_sessions() -> dict[str, object]:
-    sessions = _list_document_sessions()
+async def list_sessions(user: User = Depends(require_user)) -> dict[str, object]:
+    sessions = _list_document_sessions(user)
     return {"count": len(sessions), "sessions": [item.model_dump() for item in sessions]}
 
 
@@ -831,7 +854,9 @@ async def sample_lab_report():
 
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload(file: UploadFile = File(...)) -> UploadResponse:
+async def upload(
+    file: UploadFile = File(...), user: User = Depends(require_user)
+) -> UploadResponse:
     """Store the uploaded file and return immediately — no extraction yet."""
     _cleanup_expired_sessions()
 
@@ -867,10 +892,9 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
         )
         _save_state(state)
 
-        # Best-effort: persist the Document row immediately so upload success
-        # never depends on AI processing, and a processing job always has a
-        # stable row to attach to. Loss of this write only costs job/retry
-        # visibility, not the upload or the review session (JSON state.json).
+        # The Document row is what makes this upload owned and reachable, so
+        # it is required: without it nobody could open, retry or delete the
+        # file, and it would only linger until the orphan sweep removes it.
         try:
             with session_scope() as session:
                 create_uploaded_document(
@@ -879,12 +903,16 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
                     filename=state.filename,
                     content_type=state.content_type,
                     storage_path=str(folder),
+                    owner_id=user.id,
                 )
         except Exception as db_error:
-            logger.warning(
-                "document_persist_failed",
-                extra={"document_id": document_id, "error_type": type(db_error).__name__},
-            )
+            raise MediGuideError(
+                "UPLOAD_NOT_SAVED",
+                "We couldn't save this upload. Please try again in a moment.",
+                status_code=503,
+                retryable=True,
+                technical_detail=f"{type(db_error).__name__}: {db_error}",
+            ) from db_error
 
         return UploadResponse(
             document_id=document_id,
@@ -893,7 +921,7 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
             file_size=file_size,
             status="uploaded",
         )
-    except HTTPException:
+    except (HTTPException, MediGuideError):
         shutil.rmtree(folder, ignore_errors=True)
         raise
     except Exception as e:
@@ -905,8 +933,10 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
 
 
 @router.get("/{document_id}/status", response_model=DocumentStatusResponse)
-async def document_status(document_id: str) -> DocumentStatusResponse:
-    state = _load_state(document_id)
+async def document_status(
+    document_id: str, user: User = Depends(require_user)
+) -> DocumentStatusResponse:
+    state = _load_owned_state(document_id, user)
     return DocumentStatusResponse(
         document_id=state.document_id,
         filename=state.filename,
@@ -921,9 +951,11 @@ async def document_status(document_id: str) -> DocumentStatusResponse:
 
 
 @router.post("/{document_id}/process", response_model=DocumentState)
-async def process_document(document_id: str) -> DocumentState:
+async def process_document(
+    document_id: str, user: User = Depends(require_user)
+) -> DocumentState:
     """Extract pages and fields from a previously uploaded document."""
-    state = _load_state(document_id)
+    state = _load_owned_state(document_id, user)
     folder = _folder(document_id)
     pages_dir = folder / "pages"
     pages_dir.mkdir(parents=True, exist_ok=True)
@@ -999,29 +1031,107 @@ async def process_document(document_id: str) -> DocumentState:
 
 
 @router.post("/upload-and-process", response_model=DocumentState, include_in_schema=False)
-async def upload_and_process(file: UploadFile = File(...)) -> DocumentState:
+async def upload_and_process(
+    file: UploadFile = File(...), user: User = Depends(require_user)
+) -> DocumentState:
     """Legacy one-step upload used by older clients."""
-    uploaded = await upload(file)
-    return await process_document(uploaded.document_id)
+    uploaded = await upload(file, user)
+    return await process_document(uploaded.document_id, user)
 
 
 @router.get("/{document_id}", response_model=DocumentState)
-async def get_document(document_id: str) -> DocumentState:
-    return _load_state(document_id)
+async def get_document(document_id: str, user: User = Depends(require_user)) -> DocumentState:
+    return _load_owned_state(document_id, user)
 
 
 @router.get("/{document_id}/pages/{page_number}/preview")
-async def preview(document_id: str, page_number: int):
-    state = _load_state(document_id)
+async def preview(document_id: str, page_number: int, user: User = Depends(require_user)):
+    state = _load_owned_state(document_id, user)
     if page_number < 1 or page_number > state.page_count:
         raise HTTPException(status_code=404, detail="Page not found.")
     path = _folder(document_id) / "pages" / f"page-{page_number}.png"
     return FileResponse(path, media_type="image/png")
 
 
+_REVIEWABLE_ATTRIBUTES = ("label", "value", "unit", "reference_range")
+
+
+def _merge_reviewed_fields(
+    extracted: list[ExtractedField],
+    submitted: list[ExtractedField],
+    excluded_ids: set[str],
+) -> list[ExtractedField]:
+    """Applies the reviewer's text edits onto the server's own extraction.
+
+    Provenance (page, source text, confidence, extraction method) is never
+    taken from the request. A field id the server didn't extract is
+    rejected rather than silently added.
+    """
+    by_id = {field.field_id: field for field in extracted}
+    merged: list[ExtractedField] = []
+    for item in submitted:
+        original = by_id.get(item.field_id)
+        if original is None:
+            raise MediGuideError(
+                "UNKNOWN_FIELD",
+                "This review includes a value that wasn't extracted from the document. "
+                "Reload the document and review it again.",
+                status_code=422,
+            )
+        if item.field_id in excluded_ids:
+            continue
+        edits = {name: getattr(item, name) for name in _REVIEWABLE_ATTRIBUTES}
+        edited = any(edits[name] != getattr(original, name) for name in _REVIEWABLE_ATTRIBUTES)
+        update: dict[str, Any] = {**edits, "user_edited": original.user_edited or edited}
+        if edited:
+            update["status"] = _recompute_status(item.value, item.reference_range, item.status)
+        merged.append(original.model_copy(update=update))
+    return merged
+
+
+def _report_date_for(document_id: str, fields: list[ExtractedField]) -> str | None:
+    # Prefer human-confirmed date fields (supports multi-page / multi-date reports).
+    for field in fields:
+        if "date" in field.label.lower() and field.value.strip():
+            return field.value.strip()
+    pdf_path = _folder(document_id) / "document.pdf"
+    if not pdf_path.exists():
+        return None
+    try:
+        doc = pymupdf.open(pdf_path)
+        try:
+            for page in doc:
+                match = re.search(
+                    r"(?:Report\s*date|Date|Collection\s*date)[:\s]*([0-9\-/]+)",
+                    page.get_text("text"),
+                    re.I,
+                )
+                if match:
+                    return match.group(1).strip()
+        finally:
+            doc.close()
+    except Exception:
+        return None
+    return None
+
+
 @router.post("/{document_id}/confirm")
-async def confirm(document_id: str, request: ConfirmRequest):
-    state = _load_state(document_id)
+async def confirm(
+    document_id: str, request: ConfirmRequest, user: User = Depends(require_user)
+):
+    state = _load_owned_state(document_id, user)
+    if state.confirmed:
+        raise MediGuideError(
+            "DOCUMENT_ALREADY_CONFIRMED",
+            "This report was already confirmed. Its verified values are kept as they were.",
+            status_code=409,
+        )
+    if state.status != "review_required" or not state.fields:
+        raise MediGuideError(
+            "DOCUMENT_NOT_READY",
+            "This document hasn't finished processing, so there is nothing to confirm yet.",
+            status_code=409,
+        )
     if not request.reviewed_names_values_units_dates:
         raise HTTPException(
             status_code=400,
@@ -1030,73 +1140,76 @@ async def confirm(document_id: str, request: ConfirmRequest):
     if not request.fields:
         raise HTTPException(status_code=400, detail="No reviewed fields supplied.")
 
-    state.fields = [
-        field.model_copy(update={"user_edited": True})
-        for field in request.fields
-    ]
-    state.confirmed = True
-    state.status = "confirmed"
-    _save_state(state)
+    confirmed_fields = _merge_reviewed_fields(
+        state.fields, request.fields, set(request.excluded_field_ids)
+    )
+    if not confirmed_fields:
+        raise HTTPException(
+            status_code=400,
+            detail="Every value was rejected. Keep at least one to confirm this report.",
+        )
+    report_date = _report_date_for(document_id, confirmed_fields)
 
-    # Prefer human-confirmed date fields (supports multi-page / multi-date reports).
-    report_date: str | None = None
-    for field in state.fields:
-        if "date" in field.label.lower() and field.value.strip():
-            report_date = field.value.strip()
-            break
-    if not report_date:
-        pdf_path = _folder(document_id) / "document.pdf"
-        if pdf_path.exists():
-            try:
-                doc = pymupdf.open(pdf_path)
-                for page in doc:
-                    txt = page.get_text("text")
-                    m = re.search(
-                        r"(?:Report\s*date|Date|Collection\s*date)[:\s]*([0-9\-/]+)",
-                        txt,
-                        re.I,
-                    )
-                    if m:
-                        report_date = m.group(1).strip()
-                        break
-                doc.close()
-            except Exception:
-                pass
-
-    persistence: dict[str, object] = {"persisted": False, "lab_observation_count": 0}
+    # The database write comes first and is all-or-nothing. Only once it has
+    # committed is the review session marked confirmed, so a failure never
+    # leaves a report that looks confirmed but is missing from Labs.
     try:
-        persistence = {
-            "persisted": True,
-            **create_observations_from_document(
+        with session_scope() as session:
+            if get_owned_document(session, document_id, user.id) is None:
+                raise not_found("Document")
+            persistence = create_observations_from_document(
+                session,
                 document_id=document_id,
                 filename=state.filename,
                 page_count=state.page_count,
                 pages=[page.model_dump() for page in state.pages],
-                fields=[field.model_dump() for field in state.fields],
+                fields=[field.model_dump() for field in confirmed_fields],
                 report_date=report_date,
                 storage_path=str(_folder(document_id)),
-            ),
-        }
+            )
+    except MediGuideError:
+        raise
     except Exception as error:
-        # Session confirmation still succeeds; relational store is best-effort
-        # until migrations/Docker Postgres are running.
-        persistence = {
-            "persisted": False,
-            "lab_observation_count": 0,
-            "detail": f"{type(error).__name__}: {error}",
-        }
+        raise MediGuideError(
+            "CONFIRMATION_NOT_SAVED",
+            "Your review wasn't saved, so nothing changed. Please try confirming again.",
+            status_code=503,
+            retryable=True,
+            technical_detail=f"{type(error).__name__}: {error}",
+        ) from error
+
+    state.fields = confirmed_fields
+    state.confirmed = True
+    state.status = "confirmed"
+    _save_state(state)
 
     return {
         "document_id": document_id,
         "confirmed": True,
         "fields": state.fields,
-        "persistence": persistence,
+        "persistence": {"persisted": True, **persistence},
     }
 
 
+@router.delete("/{document_id}")
+async def delete_document(document_id: str, user: User = Depends(require_user)) -> dict[str, object]:
+    """Permanently removes an owned document: its database records (fields,
+    lab observations, jobs) and its stored original and page previews."""
+    with session_scope() as session:
+        document = get_owned_document(session, document_id, user.id)
+        if document is None:
+            raise not_found("Document")
+        session.delete(document)
+    shutil.rmtree(_folder(document_id), ignore_errors=True)
+    logger.info("document_deleted", extra={"document_id": document_id})
+    return {"deleted": True, "document_id": document_id}
+
+
 @router.post("/{document_id}/explain", response_model=ExplainResponse)
-async def explain(document_id: str, request: ExplainRequest) -> ExplainResponse:
-    state = _load_state(document_id)
+async def explain(
+    document_id: str, request: ExplainRequest, user: User = Depends(require_user)
+) -> ExplainResponse:
+    state = _load_owned_state(document_id, user)
     if not state.confirmed:
         raise HTTPException(
             status_code=409,

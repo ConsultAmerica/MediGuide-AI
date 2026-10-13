@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pymupdf
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from PIL import Image
@@ -45,7 +45,7 @@ from src.database.imaging_repository import (
     get_finding,
     get_findings,
     get_report_sections,
-    get_study,
+    get_owned_study,
     list_studies,
     modality_summary,
     report_gaps_for_study,
@@ -58,10 +58,12 @@ from src.database.imaging_repository import (
     upsert_findings_from_sections,
     upsert_report_sections,
 )
-from src.database.models import ProcessingJob
+from src.auth.dependencies import not_found, require_user
+from src.database.models import ProcessingJob, User
 from src.database.repository import (
     add_document_page,
     create_uploaded_document,
+    get_owned_document,
     set_document_page_count,
 )
 from src.database.session import probe_database, session_scope
@@ -347,9 +349,9 @@ async def download_imaging_sample(slug: str) -> FileResponse:
 
 
 @router.get("/modalities")
-async def list_modalities() -> dict[str, Any]:
+async def list_modalities(user: User = Depends(require_user)) -> dict[str, Any]:
     with session_scope() as session:
-        summary = {row["modality"]: row for row in modality_summary(session)}
+        summary = {row["modality"]: row for row in modality_summary(session, user.id)}
     return {
         "modalities": [
             {
@@ -364,7 +366,9 @@ async def list_modalities() -> dict[str, Any]:
 
 
 @router.post("/studies")
-async def create_study_endpoint(request: StudyCreateRequest) -> dict[str, Any]:
+async def create_study_endpoint(
+    request: StudyCreateRequest, user: User = Depends(require_user)
+) -> dict[str, Any]:
     if request.modality not in MODALITY_LABELS:
         raise HTTPException(
             status_code=422,
@@ -379,6 +383,7 @@ async def create_study_endpoint(request: StudyCreateRequest) -> dict[str, Any]:
             study_date=_parse_date(request.study_date),
             institution=request.institution,
             accession_identifier=request.accession_identifier,
+            owner_id=user.id,
         )
         return serialize_study(study)
 
@@ -389,10 +394,12 @@ async def list_studies_endpoint(
     body_region: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    user: User = Depends(require_user),
 ) -> dict[str, Any]:
     with session_scope() as session:
         studies = list_studies(
             session,
+            owner_id=user.id,
             modality=modality,
             body_region=body_region,
             date_from=_parse_date(date_from),
@@ -402,18 +409,21 @@ async def list_studies_endpoint(
 
 
 @router.get("/studies/{study_id}")
-async def get_study_endpoint(study_id: str) -> dict[str, Any]:
+async def get_study_endpoint(study_id: str, user: User = Depends(require_user)) -> dict[str, Any]:
     with session_scope() as session:
-        study = get_study(session, study_id)
+        study = get_owned_study(session, study_id, user.id)
         if study is None:
             raise HTTPException(status_code=404, detail="Imaging study not found.")
         return serialize_study(study)
 
 
 @router.delete("/studies/{study_id}")
-async def delete_study_endpoint(study_id: str) -> dict[str, Any]:
+async def delete_study_endpoint(study_id: str, user: User = Depends(require_user)) -> dict[str, Any]:
     with session_scope() as session:
-        deleted = delete_study(session, study_id)
+        deleted = (
+            get_owned_study(session, study_id, user.id) is not None
+            and delete_study(session, study_id)
+        )
     if not deleted:
         raise HTTPException(status_code=404, detail="Imaging study not found.")
     return {"deleted": True}
@@ -425,11 +435,22 @@ async def delete_study_endpoint(study_id: str) -> dict[str, Any]:
 
 
 @router.post("/studies/{study_id}/report")
-async def upload_report(study_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
+async def upload_report(
+    study_id: str, file: UploadFile = File(...), user: User = Depends(require_user)
+) -> dict[str, Any]:
     with session_scope() as session:
-        study = get_study(session, study_id)
+        study = get_owned_study(session, study_id, user.id)
         if study is None:
             raise HTTPException(status_code=404, detail="Imaging study not found.")
+        # A new upload would replace the report the owner already reviewed
+        # and hide its confirmed findings, so that is refused outright.
+        # Unverified studies (including failed attempts) can still retry.
+        if study.report_document_id and study.verification_status != "unverified":
+            raise MediGuideError(
+                "STUDY_ALREADY_VERIFIED",
+                "This study already has a reviewed report. Add a new study for a different report.",
+                status_code=409,
+            )
 
     filename = file.filename or ""
     suffix = Path(filename).suffix.lower()
@@ -465,6 +486,7 @@ async def upload_report(study_id: str, file: UploadFile = File(...)) -> dict[str
             filename=filename or f"report{suffix}",
             content_type=file.content_type or "",
             storage_path=str(folder),
+            owner_id=user.id,
         )
         # Set before extraction begins (not after it fails) so a status
         # poll started the moment this request was fired — before the
@@ -559,12 +581,12 @@ async def upload_report(study_id: str, file: UploadFile = File(...)) -> dict[str
 
 
 @router.get("/studies/{study_id}/report/status")
-async def report_status(study_id: str) -> dict[str, Any]:
+async def report_status(study_id: str, user: User = Depends(require_user)) -> dict[str, Any]:
     """Polling target for a report upload in flight — see
     ImagingStudy.pending_report_document_id's docstring for why this is
     keyed by study_id rather than document_id."""
     with session_scope() as session:
-        study = get_study(session, study_id)
+        study = get_owned_study(session, study_id, user.id)
         if study is None:
             raise HTTPException(status_code=404, detail="Imaging study not found.")
 
@@ -592,9 +614,9 @@ async def report_status(study_id: str) -> dict[str, Any]:
 
 
 @router.get("/studies/{study_id}/report/sections")
-async def get_sections_endpoint(study_id: str) -> dict[str, Any]:
+async def get_sections_endpoint(study_id: str, user: User = Depends(require_user)) -> dict[str, Any]:
     with session_scope() as session:
-        study = get_study(session, study_id)
+        study = get_owned_study(session, study_id, user.id)
         if study is None:
             raise HTTPException(status_code=404, detail="Imaging study not found.")
         if not study.report_document_id:
@@ -605,14 +627,14 @@ async def get_sections_endpoint(study_id: str) -> dict[str, Any]:
 
 @router.post("/studies/{study_id}/report/confirm")
 async def confirm_sections_endpoint(
-    study_id: str, request: ConfirmSectionsRequest
+    study_id: str, request: ConfirmSectionsRequest, user: User = Depends(require_user)
 ) -> dict[str, Any]:
     if not request.reviewed:
         raise HTTPException(
             status_code=400, detail="Review the extracted report sections before confirming."
         )
     with session_scope() as session:
-        study = get_study(session, study_id)
+        study = get_owned_study(session, study_id, user.id)
         if study is None:
             raise HTTPException(status_code=404, detail="Imaging study not found.")
         if not study.report_document_id:
@@ -635,9 +657,9 @@ async def confirm_sections_endpoint(
 
 
 @router.get("/studies/{study_id}/findings")
-async def list_findings_endpoint(study_id: str) -> dict[str, Any]:
+async def list_findings_endpoint(study_id: str, user: User = Depends(require_user)) -> dict[str, Any]:
     with session_scope() as session:
-        study = get_study(session, study_id)
+        study = get_owned_study(session, study_id, user.id)
         if study is None:
             raise HTTPException(status_code=404, detail="Imaging study not found.")
         findings = get_findings(session, study_id)
@@ -654,14 +676,14 @@ async def list_findings_endpoint(study_id: str) -> dict[str, Any]:
 
 @router.post("/studies/{study_id}/findings/confirm")
 async def confirm_findings_endpoint(
-    study_id: str, request: ConfirmFindingsRequest
+    study_id: str, request: ConfirmFindingsRequest, user: User = Depends(require_user)
 ) -> dict[str, Any]:
     if not request.reviewed:
         raise HTTPException(
             status_code=400, detail="Review extracted findings before confirming."
         )
     with session_scope() as session:
-        study = get_study(session, study_id)
+        study = get_owned_study(session, study_id, user.id)
         if study is None:
             raise HTTPException(status_code=404, detail="Imaging study not found.")
         rows = confirm_findings(
@@ -673,7 +695,9 @@ async def confirm_findings_endpoint(
 
 
 @router.post("/findings/explain")
-async def explain_finding_endpoint(request: FindingExplainRequest) -> dict[str, Any]:
+async def explain_finding_endpoint(
+    request: FindingExplainRequest, user: User = Depends(require_user)
+) -> dict[str, Any]:
     """Educational explanation for a verified finding — Layer 2 only.
 
     Report summary and source evidence remain available if the educational
@@ -681,15 +705,15 @@ async def explain_finding_endpoint(request: FindingExplainRequest) -> dict[str, 
     """
     with session_scope() as session:
         finding = get_finding(session, request.finding_id)
-        if finding is None:
+        study = get_owned_study(session, finding.study_id, user.id) if finding else None
+        if finding is None or study is None:
             raise HTTPException(status_code=404, detail="Finding not found.")
         if finding.verification_status not in {"confirmed"}:
             raise HTTPException(
                 status_code=409,
                 detail="Confirm this finding before requesting an educational explanation.",
             )
-        study = get_study(session, finding.study_id)
-        modality = study.modality if study else ""
+        modality = study.modality
         finding_payload = serialize_finding(finding)
         report_excerpt = finding.confirmed_text or finding.original_text
 
@@ -801,9 +825,9 @@ APPROVED EVIDENCE
 
 
 @router.get("/studies/{study_id}/report/pages/{page_number}/preview")
-async def report_page_preview(study_id: str, page_number: int):
+async def report_page_preview(study_id: str, page_number: int, user: User = Depends(require_user)):
     with session_scope() as session:
-        study = get_study(session, study_id)
+        study = get_owned_study(session, study_id, user.id)
         if study is None or not study.report_document_id:
             raise HTTPException(status_code=404, detail="No report attached to this study.")
         document_id = study.report_document_id
@@ -820,8 +844,11 @@ async def report_page_preview(study_id: str, page_number: int):
 
 
 @router.post("/compare")
-async def compare_reports(request: CompareRequest) -> dict[str, Any]:
+async def compare_reports(request: CompareRequest, user: User = Depends(require_user)) -> dict[str, Any]:
     with session_scope() as session:
+        for document_id in (request.document_id_a, request.document_id_b):
+            if get_owned_document(session, document_id, user.id) is None:
+                raise not_found("Report")
         sections_a = {
             section.section_type: section
             for section in get_report_sections(session, request.document_id_a)
@@ -885,7 +912,7 @@ APPROVED EVIDENCE
 
 
 @router.post("/terminology/explain")
-async def explain_terminology(request: TerminologyRequest) -> dict[str, Any]:
+async def explain_terminology(request: TerminologyRequest, user: User = Depends(require_user)) -> dict[str, Any]:
     term = request.term.strip()
     if not term:
         raise HTTPException(status_code=422, detail="A term is required.")
@@ -951,7 +978,7 @@ def probe_imaging_documents() -> tuple[bool, str]:
         return False, db_detail
     try:
         with session_scope() as session:
-            modality_summary(session)
+            modality_summary(session, None)
         return True, "Imaging studies reachable"
     except Exception as error:
         return False, f"Unreadable ({type(error).__name__})"

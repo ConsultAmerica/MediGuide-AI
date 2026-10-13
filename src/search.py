@@ -17,11 +17,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.database.models import ImagingReportSection, ImagingStudy
+from src.auth.dependencies import require_user
+from src.database.models import ImagingReportSection, ImagingStudy, User
 from src.database.session import session_scope
 from src.database.timeline_repository import get_timeline_entries
 from src.imaging import MODALITY_LABELS
@@ -37,7 +38,7 @@ PER_TYPE_CAP = 8
 
 
 @router.get("")
-async def search_endpoint(q: str = "") -> dict[str, Any]:
+async def search_endpoint(q: str = "", user: User = Depends(require_user)) -> dict[str, Any]:
     query = q.strip()
     if len(query) < MIN_QUERY_LENGTH:
         raise HTTPException(
@@ -45,7 +46,7 @@ async def search_endpoint(q: str = "") -> dict[str, Any]:
             detail=f"Search needs at least {MIN_QUERY_LENGTH} characters.",
         )
     with session_scope() as session:
-        results = run_search(session, query)
+        results = run_search(session, query, owner_id=user.id)
     return {"query": query, "results": results, "total": len(results)}
 
 
@@ -80,12 +81,13 @@ def _section_to_result(section: ImagingReportSection, study: ImagingStudy) -> di
 
 
 def _search_imaging_report_sections(
-    session: Session, query: str, *, limit: int
+    session: Session, query: str, *, owner_id: str | None, limit: int
 ) -> list[dict[str, Any]]:
     rows = session.execute(
         select(ImagingReportSection, ImagingStudy)
         .join(ImagingStudy, ImagingReportSection.study_id == ImagingStudy.id)
         .where(
+            ImagingStudy.owner_id == owner_id,
             ImagingReportSection.verification_status == "confirmed",
             ImagingReportSection.section_text.ilike(f"%{query}%"),
         )
@@ -94,14 +96,14 @@ def _search_imaging_report_sections(
     return [_section_to_result(section, study) for section, study in rows]
 
 
-def run_search(session: Session, query: str) -> list[dict[str, Any]]:
+def run_search(session: Session, query: str, *, owner_id: str | None) -> list[dict[str, Any]]:
     needle = query.lower()
     # Lab-name alias matching (e.g. "a1c"/"hba1c" -> "hemoglobin_a1c") reuses
     # the same normalization dictionary the extraction pipeline already
     # uses to name-match a raw test_code, rather than a new one.
     alias_code = normalize_test_name(query)
 
-    entries = get_timeline_entries(session)
+    entries = get_timeline_entries(session, owner_id=owner_id)
     per_type_counts: dict[str, int] = {}
     hits: list[dict[str, Any]] = []
     for entry in entries:
@@ -121,6 +123,8 @@ def run_search(session: Session, query: str) -> list[dict[str, Any]]:
             hits.append(_entry_to_result(entry))
             per_type_counts[result_type] = per_type_counts.get(result_type, 0) + 1
 
-    hits.extend(_search_imaging_report_sections(session, query, limit=PER_TYPE_CAP))
+    hits.extend(_search_imaging_report_sections(
+        session, query, owner_id=owner_id, limit=PER_TYPE_CAP
+    ))
 
     return hits

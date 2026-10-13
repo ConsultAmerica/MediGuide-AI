@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pymupdf
 
+from tests.helpers import current_user_id, save_owned_medication_session
+
 
 def _make_pdf(text: str) -> bytes:
     doc = pymupdf.open()
@@ -25,7 +27,7 @@ def _confirm_medication(api_client, medication_id: str, name: str) -> None:
         fields=[medication_workspace_module.MedicationField(**f) for f in fields],
         confirmed=False,
     )
-    medication_workspace_module._save_state(state)
+    save_owned_medication_session(api_client, state)
     response = api_client.post(
         f"/api/medications/v2/{medication_id}/confirm",
         json={"fields": fields, "reviewed_name_strength_instructions": True},
@@ -50,7 +52,9 @@ def test_search_finds_confirmed_medication(api_client):
     assert results[0]["route"] == "/workspace/timeline"
 
 
-def _upsert_lab_document(document_id: str, filename: str, field_label: str) -> None:
+def _upsert_lab_document(
+    document_id: str, filename: str, field_label: str, *, owner_id: str
+) -> None:
     import src.database.repository as repository_module
     from src.database.session import session_scope
 
@@ -73,6 +77,7 @@ def _upsert_lab_document(document_id: str, filename: str, field_label: str) -> N
             page_count=1,
             pages=[{"page_number": 1, "preview_url": "", "text_available": True}],
             fields=[field],
+            owner_id=owner_id,
         )
 
 
@@ -80,7 +85,9 @@ def test_search_finds_confirmed_document_via_lab_report_title(api_client):
     """Documents with lab observations surface as "Lab Report" entries (the
     timeline's own dedup rule) — search inherits that, it does not show a
     second, separate generic-document hit for the same PDF."""
-    _upsert_lab_document("doc-1", "a1c_report.pdf", "Hemoglobin A1C")
+    _upsert_lab_document(
+        "doc-1", "a1c_report.pdf", "Hemoglobin A1C", owner_id=current_user_id(api_client)
+    )
 
     response = api_client.get("/api/search", params={"q": "a1c"})
     assert response.status_code == 200
@@ -95,7 +102,7 @@ def test_search_finds_lab_observation_by_alias(api_client):
     """"a1c" should find a LabObservation whose test_name is "Hemoglobin
     A1C" even though "a1c" is not literally a substring of that name,
     exercising the normalize_test_name()-based alias matching."""
-    _upsert_lab_document("doc-1", "labs.pdf", "HbA1c")
+    _upsert_lab_document("doc-1", "labs.pdf", "HbA1c", owner_id=current_user_id(api_client))
 
     response = api_client.get("/api/search", params={"q": "a1c"})
     assert response.status_code == 200

@@ -16,14 +16,14 @@ from src.database.timeline_repository import get_timeline_entries, list_timeline
 
 def test_empty_database_returns_no_entries(db_session):
     with db_session.session_scope() as session:
-        assert get_timeline_entries(session) == []
+        assert get_timeline_entries(session, owner_id=None) == []
 
 
 def test_unconfirmed_document_never_appears(db_session):
     with db_session.session_scope() as session:
         session.add(Document(id="doc-1", filename="draft.pdf", confirmed=False))
     with db_session.session_scope() as session:
-        assert get_timeline_entries(session) == []
+        assert get_timeline_entries(session, owner_id=None) == []
 
 
 def test_unverified_imaging_study_never_appears(db_session):
@@ -38,7 +38,7 @@ def test_unverified_imaging_study_never_appears(db_session):
             )
         )
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
     # The document itself is confirmed and has no lab observations, so it
     # still surfaces as a generic Document entry — it just must not also
     # (or instead) appear as an Imaging entry while unverified.
@@ -59,7 +59,7 @@ def test_imaging_report_document_is_not_double_counted(db_session):
             )
         )
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     assert len(entries) == 1
     assert entries[0]["category"] == "imaging"
@@ -105,7 +105,7 @@ def test_document_with_lab_observations_becomes_laboratory_entry(db_session):
             )
         )
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     assert len(entries) == 1
     entry = entries[0]
@@ -129,7 +129,7 @@ def test_document_without_lab_observations_becomes_generic_document_entry(db_ses
             )
         )
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     assert len(entries) == 1
     assert entries[0]["category"] == "document"
@@ -148,7 +148,7 @@ def test_medication_record_becomes_medication_entry(db_session):
             )
         )
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     assert len(entries) == 1
     entry = entries[0]
@@ -164,7 +164,7 @@ def test_entries_sorted_descending_with_undated_last(db_session):
         session.add(Document(id="doc-new", filename="b.pdf", confirmed=True, report_date=date(2026, 9, 1)))
         session.add(Document(id="doc-undated", filename="c.pdf", confirmed=True, report_date=None))
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     assert [e["link"]["id"] for e in entries] == ["doc-new", "doc-old", "doc-undated"]
 
@@ -190,7 +190,7 @@ def test_lab_subtitle_prefers_headline_tests_when_present(db_session):
                 )
             )
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     subtitle = entries[0]["subtitle"]
     assert "Hemoglobin A1C" in subtitle
@@ -208,7 +208,7 @@ def test_event_type_and_source_fields_mirror_category_and_link(db_session):
     with db_session.session_scope() as session:
         session.add(Document(id="doc-1", filename="referral.pdf", confirmed=True))
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     entry = entries[0]
     assert entry["event_type"] == entry["category"]
@@ -265,7 +265,7 @@ def test_document_id_and_page_number_per_category(db_session):
         # Medication.
         session.add(MedicationRecord(id="med-1", medication_name="Amoxicillin", source="typed"))
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     by_id = {entry["entry_id"]: entry for entry in entries}
 
@@ -307,7 +307,7 @@ def test_measurements_embedded_on_lab_entries_only(db_session):
         session.add(Document(id="doc-2", filename="referral.pdf", confirmed=True))
         session.add(MedicationRecord(id="med-1", medication_name="Amoxicillin", source="typed"))
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     by_id = {entry["entry_id"]: entry for entry in entries}
     measurements = by_id["lab:doc-1"]["measurements"]
@@ -332,7 +332,7 @@ def test_sort_tiebreak_by_entry_id_when_dates_equal(db_session):
         session.add(Document(id="doc-b", filename="b.pdf", confirmed=True, report_date=date(2026, 8, 12)))
         session.add(Document(id="doc-a", filename="a.pdf", confirmed=True, report_date=date(2026, 8, 12)))
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     same_date_ids = [e["entry_id"] for e in entries if e["date"] == "2026-08-12"]
     # entry_id is "document:<id>" for both — reverse=True on the tuple means
@@ -362,7 +362,7 @@ def test_document_with_both_imaging_link_and_lab_observations_appears_once_as_im
             )
         )
     with db_session.session_scope() as session:
-        entries = get_timeline_entries(session)
+        entries = get_timeline_entries(session, owner_id=None)
 
     doc_1_entries = [e for e in entries if e.get("document_id") == "doc-1"]
     assert len(doc_1_entries) == 1
@@ -406,7 +406,7 @@ def _seed_mixed_entries(db_session):
 def test_list_timeline_entries_filters_by_event_type(db_session):
     _seed_mixed_entries(db_session)
     with db_session.session_scope() as session:
-        result = list_timeline_entries(session, event_type="imaging")
+        result = list_timeline_entries(session, owner_id=None, event_type="imaging")
 
     assert [e["category"] for e in result["entries"]] == ["imaging"]
     assert result["total_matched"] == 1
@@ -415,7 +415,7 @@ def test_list_timeline_entries_filters_by_event_type(db_session):
 def test_list_timeline_entries_filters_by_date_range(db_session):
     _seed_mixed_entries(db_session)
     with db_session.session_scope() as session:
-        result = list_timeline_entries(session, date_from="2026-09-01", date_to="2026-09-30")
+        result = list_timeline_entries(session, owner_id=None, date_from="2026-09-01", date_to="2026-09-30")
 
     # Only the imaging entry (Sep 2) falls in range; the Jul 28 medication
     # and the Aug 12 lab entry are both excluded.
@@ -425,7 +425,7 @@ def test_list_timeline_entries_filters_by_date_range(db_session):
 def test_list_timeline_entries_filters_by_search(db_session):
     _seed_mixed_entries(db_session)
     with db_session.session_scope() as session:
-        result = list_timeline_entries(session, search="amoxicillin")
+        result = list_timeline_entries(session, owner_id=None, search="amoxicillin")
 
     assert [e["category"] for e in result["entries"]] == ["medication"]
 
@@ -433,18 +433,18 @@ def test_list_timeline_entries_filters_by_search(db_session):
 def test_list_timeline_entries_pagination_cursor_is_stable_across_pages(db_session):
     _seed_mixed_entries(db_session)
     with db_session.session_scope() as session:
-        page_one = list_timeline_entries(session, limit=1)
+        page_one = list_timeline_entries(session, owner_id=None, limit=1)
     assert len(page_one["entries"]) == 1
     assert page_one["next_cursor"] is not None
     assert page_one["total_matched"] == 3
 
     with db_session.session_scope() as session:
-        page_two = list_timeline_entries(session, limit=1, cursor=page_one["next_cursor"])
+        page_two = list_timeline_entries(session, owner_id=None, limit=1, cursor=page_one["next_cursor"])
     assert len(page_two["entries"]) == 1
     assert page_two["entries"][0]["entry_id"] != page_one["entries"][0]["entry_id"]
 
     with db_session.session_scope() as session:
-        page_three = list_timeline_entries(session, limit=1, cursor=page_two["next_cursor"])
+        page_three = list_timeline_entries(session, owner_id=None, limit=1, cursor=page_two["next_cursor"])
     assert len(page_three["entries"]) == 1
     assert page_three["next_cursor"] is None
 
@@ -456,4 +456,4 @@ def test_list_timeline_entries_invalid_cursor_raises(db_session):
     _seed_mixed_entries(db_session)
     with db_session.session_scope() as session:
         with pytest.raises(HTTPException):
-            list_timeline_entries(session, cursor="not-a-valid-cursor")
+            list_timeline_entries(session, owner_id=None, cursor="not-a-valid-cursor")

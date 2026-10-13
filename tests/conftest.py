@@ -46,7 +46,21 @@ def api_client(monkeypatch, tmp_path):
     import api
 
     with TestClient(api.app, raise_server_exceptions=False) as client:
+        # Signed in as a fresh guest by default, since every record API now
+        # requires an owner. Tests that need a second, separate owner use
+        # the `other_user_headers` fixture.
+        token = client.post("/api/auth/guest").json()["token"]
+        client.headers["Authorization"] = f"Bearer {token}"
         yield client
 
     if session_module._engine is not None:
         session_module._engine.dispose()
+
+
+@pytest.fixture()
+def other_user_headers(api_client):
+    """Authorization headers for a second, unrelated user — pass as
+    ``headers=`` on a request to act as someone who owns none of the
+    default client's records."""
+    response = api_client.post("/api/auth/guest", headers={"Authorization": ""})
+    return {"Authorization": f"Bearer {response.json()['token']}"}

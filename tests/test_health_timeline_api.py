@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pymupdf
 
+from tests.helpers import save_owned_medication_session
+
 
 def _make_pdf(text: str) -> bytes:
     doc = pymupdf.open()
@@ -78,7 +80,7 @@ def test_medication_persists_on_confirm_and_appears_in_timeline(api_client):
         fields=[medication_workspace_module.MedicationField(**f) for f in fields],
         confirmed=False,
     )
-    medication_workspace_module._save_state(state)
+    save_owned_medication_session(api_client, state)
 
     # Not yet confirmed — no record persisted.
     before_confirm = api_client.get(f"/api/medications/v2/{medication_id}/record")
@@ -129,7 +131,7 @@ def _confirm_medication(api_client, medication_id: str, name: str) -> None:
         fields=[medication_workspace_module.MedicationField(**f) for f in fields],
         confirmed=False,
     )
-    medication_workspace_module._save_state(state)
+    save_owned_medication_session(api_client, state)
     response = api_client.post(
         f"/api/medications/v2/{medication_id}/confirm",
         json={"fields": fields, "reviewed_name_strength_instructions": True},

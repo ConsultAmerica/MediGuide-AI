@@ -123,12 +123,13 @@ def create_uploaded_document(
     filename: str,
     content_type: str = "",
     storage_path: str = "",
+    owner_id: str | None = None,
 ) -> Document:
     """Persists a Document row immediately on upload, before any extraction
     has run, so a processing job always has a stable row to attach to."""
     document = session.get(Document, document_id)
     if document is None:
-        document = Document(id=document_id, filename=filename)
+        document = Document(id=document_id, filename=filename, owner_id=owner_id)
         session.add(document)
     document.filename = filename
     document.content_type = content_type
@@ -136,6 +137,23 @@ def create_uploaded_document(
     document.status = "uploaded"
     session.flush()
     return document
+
+
+def get_owned_document(session: Session, document_id: str, owner_id: str) -> Document | None:
+    document = session.get(Document, document_id)
+    if document is None or document.owner_id != owner_id:
+        return None
+    return document
+
+
+def owned_document_ids(session: Session, owner_id: str) -> set[str]:
+    return set(
+        session.execute(select(Document.id).where(Document.owner_id == owner_id)).scalars().all()
+    )
+
+
+def document_exists(session: Session, document_id: str) -> bool:
+    return session.get(Document, document_id) is not None
 
 
 def set_document_status(session: Session, document_id: str, status: str) -> None:
@@ -283,11 +301,15 @@ def upsert_confirmed_document(
     fields: list[dict[str, Any]],
     report_date: str | None = None,
     storage_path: str = "",
+    owner_id: str | None = None,
 ) -> Document:
-    """Persist a human-confirmed document and promote tracked labs."""
+    """Persist a human-confirmed document and promote tracked labs.
+
+    ``owner_id`` only applies when this call creates the row; an existing
+    document's owner is never reassigned here."""
     document = session.get(Document, document_id)
     if document is None:
-        document = Document(id=document_id, filename=filename)
+        document = Document(id=document_id, filename=filename, owner_id=owner_id)
         session.add(document)
 
     document.filename = filename
@@ -393,18 +415,29 @@ def upsert_confirmed_document(
     return document
 
 
-def list_tracked_tests(session: Session) -> list[dict[str, Any]]:
+def _owned_observations(owner_id: str):
+    """WHERE clause limiting LabObservation rows to one owner's documents."""
+    return LabObservation.document_id.in_(
+        select(Document.id).where(Document.owner_id == owner_id)
+    )
+
+
+def list_tracked_tests(session: Session, owner_id: str) -> list[dict[str, Any]]:
     rows = session.execute(
         select(
             LabObservation.test_code,
             LabObservation.test_name,
-        ).distinct()
+        )
+        .where(_owned_observations(owner_id))
+        .distinct()
     ).all()
     present = {row.test_code: row.test_name for row in rows}
     results: list[dict[str, Any]] = []
     for code, display in TRACKED_LAB_CODES.items():
         count = session.execute(
-            select(LabObservation).where(LabObservation.test_code == code)
+            select(LabObservation).where(
+                LabObservation.test_code == code, _owned_observations(owner_id)
+            )
         ).scalars().all()
         results.append(
             {
@@ -417,11 +450,11 @@ def list_tracked_tests(session: Session) -> list[dict[str, Any]]:
     return results
 
 
-def get_timeline(session: Session, test_code: str) -> list[dict[str, Any]]:
+def get_timeline(session: Session, test_code: str, owner_id: str) -> list[dict[str, Any]]:
     code = normalize_test_name(test_code)
     observations = session.execute(
         select(LabObservation)
-        .where(LabObservation.test_code == code)
+        .where(LabObservation.test_code == code, _owned_observations(owner_id))
         .options(
             selectinload(LabObservation.document),
             selectinload(LabObservation.field),
@@ -446,17 +479,28 @@ def get_timeline(session: Session, test_code: str) -> list[dict[str, Any]]:
     return points
 
 
-def get_latest_lab_summary(session: Session) -> list[dict[str, Any]]:
+def get_latest_lab_summary(session: Session, owner_id: str) -> list[dict[str, Any]]:
     summary: list[dict[str, Any]] = []
     for code in TRACKED_LAB_CODES:
-        points = get_timeline(session, code)
+        points = get_timeline(session, code, owner_id)
         if points:
             summary.append(points[-1])
     return summary
 
 
-def get_observation(session: Session, observation_id: str) -> Optional[dict[str, Any]]:
+def _get_owned_observation(
+    session: Session, observation_id: str, owner_id: str
+) -> LabObservation | None:
     item = session.get(LabObservation, observation_id)
+    if item is None or get_owned_document(session, item.document_id, owner_id) is None:
+        return None
+    return item
+
+
+def get_observation(
+    session: Session, observation_id: str, owner_id: str
+) -> Optional[dict[str, Any]]:
+    item = _get_owned_observation(session, observation_id, owner_id)
     if item is None:
         return None
     if item.field is None:
@@ -464,8 +508,8 @@ def get_observation(session: Session, observation_id: str) -> Optional[dict[str,
     return _serialize_observation(item)
 
 
-def delete_observation(session: Session, observation_id: str) -> bool:
-    item = session.get(LabObservation, observation_id)
+def delete_observation(session: Session, observation_id: str, owner_id: str) -> bool:
+    item = _get_owned_observation(session, observation_id, owner_id)
     if item is None:
         return False
     session.delete(item)
@@ -473,7 +517,11 @@ def delete_observation(session: Session, observation_id: str) -> bool:
     return True
 
 
-def delete_document_observations(session: Session, document_id: str) -> int:
+def delete_document_observations(session: Session, document_id: str, owner_id: str) -> int:
+    """Deletes one owned document and its observations; 0 for anything
+    the owner doesn't hold (callers report that as not-found)."""
+    if get_owned_document(session, document_id, owner_id) is None:
+        return 0
     observations = session.execute(
         select(LabObservation).where(LabObservation.document_id == document_id)
     ).scalars().all()

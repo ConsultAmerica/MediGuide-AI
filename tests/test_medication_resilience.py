@@ -65,6 +65,9 @@ def _fast_retries(monkeypatch):
     import src.medication_workspace as medication_workspace
 
     monkeypatch.setattr(medication_workspace, "PROCESSING_RETRY_BACKOFF_SCHEDULE_SECONDS", (0, 0))
+    # Pinned rather than read from the env default (which dropped from 3 to
+    # 2), so "two transient failures, then success" stays reachable.
+    monkeypatch.setattr(medication_workspace, "PROCESSING_RETRY_ATTEMPTS", 3)
 
 
 def test_transient_failure_retries_then_succeeds(api_client, monkeypatch):
