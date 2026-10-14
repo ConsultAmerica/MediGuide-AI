@@ -1,4 +1,36 @@
 @import "tailwindcss";
+
+/* MediGuide design tokens (docs/design-system.md). Shared by the public
+   site and the workspace. Contrast ratios are on white unless noted. */
+:root {
+  --mg-forest: #103f35;          /* 11.8:1 */
+  --mg-teal: #177c70;            /* 5.1:1, primary actions and links */
+  --mg-teal-strong: #146b60;     /* hover/pressed */
+  --mg-mint: #c8f1e3;            /* highlights; 9.6:1 as text on forest */
+  --mg-mint-soft: #e6f7f0;
+  --mg-ivory: #f7f9f6;
+  --mg-coral: #e58d79;           /* decorative only, never text */
+  --mg-coral-text: #a8482f;      /* 5.8:1 on white, 5.0:1 on coral-soft */
+  --mg-coral-soft: #fbece7;
+  --mg-text: #13221e;
+  --mg-text-muted: #4f5f59;      /* 6.7:1 */
+  --mg-border: #dce5e0;
+  --mg-border-strong: #c3d1ca;
+  --mg-surface: #ffffff;
+  --mg-surface-raised: #fbfcfa;
+  --mg-surface-dark: #0b2a23;
+  --mg-text-on-dark: #e8f3ee;
+  --mg-text-on-dark-muted: #a8c2b8;
+  --mg-focus: #177c70;
+  --mg-shadow-1: 0 1px 2px rgb(16 63 53 / 0.06), 0 1px 1px rgb(16 63 53 / 0.04);
+  --mg-shadow-2: 0 8px 24px -8px rgb(16 63 53 / 0.16), 0 2px 6px rgb(16 63 53 / 0.06);
+  --mg-shadow-3: 0 30px 60px -20px rgb(16 63 53 / 0.28), 0 12px 24px -12px rgb(16 63 53 / 0.14);
+  --mg-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --mg-radius-control: 10px;
+  --mg-radius-card: 16px;
+  --mg-radius-frame: 24px;
+}
+
 /* Shared BrandLogo/BrandMark layout — must live outside premium-landing.css
    so the workspace (which never loads that stylesheet) still lays the mark
    and wordmark out side by side instead of stacked. Tailwind's preflight

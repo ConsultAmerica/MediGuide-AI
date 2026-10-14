@@ -1,18 +1,12 @@
-"use client";
+import type { Metadata } from "next";
+import { SiteHome } from "./site/SiteHome";
 
-import { useRouter } from "next/navigation";
-import { PremiumLanding } from "./premium-landing";
-import { VIEW_TO_PATH, type View } from "./workspace/_state/workspace-shared";
+export const metadata: Metadata = {
+  title: "MediGuide — Your health information. Finally connected.",
+  description:
+    "Turn medical reports into verified, understandable information with connected timelines, grounded explanations and direct links to original evidence.",
+};
 
 export default function HomePage() {
-  const router = useRouter();
-  return (
-    <PremiumLanding
-      onStart={(view?: string, action?: string) => {
-        const path = (view && VIEW_TO_PATH[view as View]) || "home";
-        const query = action ? `?action=${encodeURIComponent(action)}` : "";
-        router.push(`/workspace/${path}${query}`);
-      }}
-    />
-  );
+  return <SiteHome />;
 }

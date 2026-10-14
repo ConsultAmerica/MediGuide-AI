@@ -13,6 +13,9 @@ const landingSerif = Source_Serif_4({
   subsets: ["latin"],
   weight: ["400", "600", "700"],
   style: ["normal", "italic"],
+  // Accent face only: not preloaded, so it never competes with the body
+  // font that renders the largest text (LCP). It still swaps in once loaded.
+  preload: false,
 });
 
 const DESCRIPTION =
