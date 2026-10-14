@@ -24,21 +24,28 @@ The reference for the public website (`frontend/src/app/site/`) and the signed-i
 | `--mg-text-muted` | `#4F5F59` | Secondary text (6.7:1 on white) |
 | `--mg-border` | `#DCE5E0` | Hairlines and card borders |
 | `--mg-surface` | `#FFFFFF` | Cards |
-| `--mg-surface-dark` | `#0B2A23` | Dark sections; text on it uses mint and `#E8F3EE` |
+| `--mg-surface-dark` | `#0B2A23` | Footer; text on it uses mint and `#E8F3EE` |
+| `--mg-band` / `--mg-band-2` | `#0E3A31` → `#14544A` | Dark brand bands (header, hero, workflow, closing CTA); white text 8.8:1 |
+| `--mg-text-on-band` | `#C9DDD5` | Secondary text on bands (6.2:1 worst case) |
+| `--mg-lime` | `#B8E46C` | Primary CTA fill with forest text (8.0:1); accent text on bands (8.0:1) |
 
 All text pairs meet WCAG 2.2 AA (4.5:1 for body text, 3:1 for large text and UI). Status is never shown by color alone: every chip also has an icon or a word.
 
+## Layout direction (site)
+
+Saturated brand bands alternate with light sections. The dark header, hero, workflow and closing CTA bands carry white type and lime accents; light sections carry a heading with a teal accent phrase. Real photography (people managing their own paperwork, never clinicians as the subject) is paired with rendered product UI. Influences, with no layouts or branding copied: TherapyNotes (brand-colored bands, high-contrast CTA, photo-topped feature cards), AestheticsPro (icon strip, floating card over photography), Celestia (saturated gradient fields, large confident sans, stats strip).
+
 ## Type
 
-- **Sans:** Plus Jakarta Sans (already loaded via `next/font`) for UI and display. Display headings use weight 700 with tight tracking (−0.035em).
-- **Serif accent:** Source Serif 4 italic, used sparingly for one emphasised phrase per section heading.
+- **Sans:** Plus Jakarta Sans (already loaded via `next/font`) for UI and display. Display headings use weight 800 with tight tracking (−0.035em).
+- **Accent phrase:** the same sans, in lime on bands and teal on light sections. The serif (Source Serif 4) remains available to the workspace but is not used on the site.
 - **Fluid scale (`clamp`):** display 44→76px, h2 32→52px, h3 20→24px, body 16–18px, small 13–14px.
 
 ## Space, shape and depth
 
 - 8px spacing grid. Sections use 96–144px vertical padding on desktop and 64–80px on mobile.
 - Content width is 1200px, with 24px gutters (16px under 480px).
-- Radius: 10px for controls, 16px for cards, 24px for large showcase frames.
+- Radius: pill (999px) for buttons and tabs, 20–24px for cards, 28–32px for photo and showcase frames.
 - Shadows have three soft, low-alpha forest-tinted levels (`--mg-shadow-1…3`). Depth comes from layering, not heavy drop shadows.
 
 ## Motion
@@ -50,11 +57,11 @@ All text pairs meet WCAG 2.2 AA (4.5:1 for body text, 3:1 for large text and UI)
 
 ## Components (site)
 
-`SiteHeader` (sticky, blurred after scroll, accessible mobile sheet) · `Hero` · `HeroVisual` (document preview + trend chart + verification card) · `WorkflowScroll` (Upload → Extract → Verify → Explain → Trace source) · `FeatureCarousel` · `BentoGrid` · `ImagingShowcase` · `TrustSection` · `FinalCta` · `SiteFooter`.
+`SiteHeader` (sticky dark bar, accessible mobile sheet) · `Hero` with `StatsStrip` · `HeroVisual` (photo + trend card + verification card) · `IconStrip` · `FeatureCards` · `WorkflowScroll` (Upload → Extract → Verify → Explain → Trace source) · `FeatureCarousel` · `BentoGrid` · `ImagingShowcase` · `TrustSection` · `FinalCta` · `SiteFooter`.
 
 ## Accessibility checklist
 
-- Visible focus ring: 3px teal outline at 2px offset.
+- Visible focus ring: 3px teal outline at 2px offset (lime on dark bands).
 - Every interactive element is reachable and operable by keyboard. The carousel supports arrow keys, the mobile menu closes with Escape and returns focus.
 - Headings are in order. Landmarks: `header`, `nav`, `main`, `footer`.
 - Decorative visuals are `aria-hidden`. Rendered UI mockups carry a text label that describes them.

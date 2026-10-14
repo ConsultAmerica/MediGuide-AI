@@ -62,7 +62,7 @@ export function SiteHeader() {
 
         <div className="site-header-actions">
           <Link href="/signin" className="site-link-quiet">Sign in</Link>
-          <Link href="/workspace/home" className="site-btn site-btn-primary site-btn-sm" prefetch={false}>
+          <Link href="/workspace/home" className="site-btn site-btn-lime site-btn-sm" prefetch={false}>
             Open workspace <ArrowRight size={15} aria-hidden="true" />
           </Link>
         </div>

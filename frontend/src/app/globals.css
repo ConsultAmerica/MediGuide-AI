@@ -12,6 +12,11 @@
   --mg-coral: #e58d79;           /* decorative only, never text */
   --mg-coral-text: #a8482f;      /* 5.8:1 on white, 5.0:1 on coral-soft */
   --mg-coral-soft: #fbece7;
+  --mg-lime: #b8e46c;            /* CTA fill with forest text (8.0:1); text on forest (8.0:1) */
+  --mg-lime-strong: #a6da55;     /* hover */
+  --mg-band: #0e3a31;            /* dark brand band */
+  --mg-band-2: #14544a;          /* dark band gradient stop; white text 8.8:1 */
+  --mg-text-on-band: #c9ddd5;    /* muted text on dark bands (6.2:1 worst case) */
   --mg-text: #13221e;
   --mg-text-muted: #4f5f59;      /* 6.7:1 */
   --mg-border: #dce5e0;

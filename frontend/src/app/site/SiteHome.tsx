@@ -3,7 +3,7 @@ import { RevealObserver } from "./RevealObserver";
 import { SiteHeader } from "./SiteHeader";
 import { WorkflowScroll } from "./WorkflowScroll";
 import {
-  BentoGrid, FinalCta, Hero, ImagingShowcase, ProofStrip, SectionHeading, SiteFooter, TrustSection,
+  BentoGrid, FeatureCards, FinalCta, Hero, IconStrip, ImagingShowcase, SectionHeading, SiteFooter, TrustSection,
 } from "./sections";
 import "./site.css";
 
@@ -17,9 +17,23 @@ export function SiteHome() {
       <SiteHeader />
       <main id="main">
         <Hero />
-        <ProofStrip />
+        <IconStrip />
 
-        <section className="site-section" id="workflow" aria-labelledby="workflow-title">
+        <section className="site-section site-section-soft" id="overview" aria-labelledby="overview-title">
+          <div className="site-container">
+            <SectionHeading
+              id="overview-title"
+              eyebrow="One place for your health paperwork"
+              title="Lab reports, scans and labels,"
+              accent="finally in one place."
+              body="MediGuide reads the documents you already have, lets you check every value, and keeps the original a tap away."
+              centered
+            />
+            <FeatureCards />
+          </div>
+        </section>
+
+        <section className="site-section site-section-band" id="workflow" aria-labelledby="workflow-title">
           <div className="site-container">
             <SectionHeading
               id="workflow-title"

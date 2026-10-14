@@ -1,44 +1,29 @@
-import { ArrowUpRight, BadgeCheck, FileText, TrendingUp } from "lucide-react";
-import { REPORT_DATE, REPORT_ROWS } from "./data";
+import Image from "next/image";
+import { ArrowUpRight, BadgeCheck, TrendingUp } from "lucide-react";
 import { TrendChart } from "./TrendChart";
+import heroPhoto from "../../../public/images/site/person-tablet-review.webp";
 
 /**
- * Rendered product UI, not a screenshot: the synthetic report page, the lab
- * trend MediGuide builds from it, and the verification card that ties a
- * value back to its exact line. Purely illustrative, so hidden from
- * assistive tech; the hero copy carries the meaning.
+ * A person reviewing their own results, with the two MediGuide cards that
+ * matter most floating over the photo: the trend built from their reports,
+ * and the verification that ties a value to its source page. The cards are
+ * rendered UI with synthetic data; the photo carries the alt text.
  */
 export function HeroVisual() {
   return (
-    <div className="hero-visual" aria-hidden="true">
-      <div className="hero-glow" />
-
-      <div className="hv-card hv-doc">
-        <div className="hv-doc-bar">
-          <FileText size={14} />
-          <span>sample-lab-report.pdf</span>
-          <em>Page 3 of 3</em>
-        </div>
-        <div className="hv-doc-page">
-          <p className="hv-doc-title">Synthetic Lab Report</p>
-          <p className="hv-doc-meta">Collection date: {REPORT_DATE}</p>
-          <div className="hv-doc-table">
-            {REPORT_ROWS.map((row, i) => (
-              <div key={row.test} className={i === 0 ? "hv-doc-row is-source" : "hv-doc-row"}>
-                <span>{row.test}</span>
-                <span>{row.value} {row.unit}</span>
-                <span>{row.range}</span>
-                <span className="hv-flag">{row.flag}</span>
-              </div>
-            ))}
-          </div>
-          <div className="hv-doc-lines">
-            <i /><i /><i />
-          </div>
-        </div>
+    <div className="hero-visual">
+      <div className="hero-photo">
+        <Image
+          src={heroPhoto}
+          alt="A woman at home reviewing a printed medical report alongside the same results on her tablet"
+          priority
+          fetchPriority="high"
+          sizes="(max-width: 1080px) 92vw, 46vw"
+          placeholder="blur"
+        />
       </div>
 
-      <div className="hv-card hv-trend">
+      <div className="hv-card hv-trend" aria-hidden="true">
         <div className="hv-card-head">
           <span className="hv-icon"><TrendingUp size={14} /></span>
           <div>
@@ -51,7 +36,7 @@ export function HeroVisual() {
         <p className="hv-foot">3 verified results · 3 reports</p>
       </div>
 
-      <div className="hv-card hv-verify">
+      <div className="hv-card hv-verify" aria-hidden="true">
         <div className="hv-verify-head">
           <BadgeCheck size={16} />
           <span>Verified by you</span>

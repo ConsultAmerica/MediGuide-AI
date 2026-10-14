@@ -1,11 +1,15 @@
+import Image from "next/image";
 import Link from "next/link";
 import {
-  ArrowRight, BadgeCheck, BookOpen, Check, FileSearch, FileText, Lock, ScanLine, ShieldCheck, Trash2, X,
+  ArrowRight, BadgeCheck, BookOpen, Check, ClipboardList, FileSearch, FileText, Lock, MessageCircleQuestion,
+  Pill, ScanLine, ShieldCheck, Trash2, TrendingUp, X,
 } from "lucide-react";
 import { BrandLogo } from "../brand-logo";
 import { MRI_REPORT, REPORT_ROWS } from "./data";
 import { HeroVisual } from "./HeroVisual";
 import { TrendChart } from "./TrendChart";
+import reportPhoto from "../../../public/images/site/person-report-laptop.webp";
+import medicationPhoto from "../../../public/images/site/person-medication-label.webp";
 
 const DEMO_HREF = "/workspace/documents?action=sample";
 
@@ -15,19 +19,19 @@ export function Hero() {
       <div className="hero-backdrop" aria-hidden="true" />
       <div className="site-container hero-grid">
         <div className="hero-copy">
-          <p className="eyebrow"><span className="eyebrow-dot" aria-hidden="true" />Health document intelligence</p>
+          <p className="eyebrow eyebrow-on-band"><span className="eyebrow-dot" aria-hidden="true" />Health document intelligence</p>
           <h1 id="hero-title">
-            Your health information. <em>Finally connected.</em>
+            Your health information. <span className="hero-accent">Finally connected.</span>
           </h1>
           <p className="hero-lead">
             Turn medical reports into verified, understandable information with connected timelines,
             grounded explanations and direct links to original evidence.
           </p>
           <div className="hero-actions">
-            <Link href={DEMO_HREF} className="site-btn site-btn-primary site-btn-lg" prefetch={false}>
+            <Link href={DEMO_HREF} className="site-btn site-btn-lime site-btn-lg" prefetch={false}>
               Try it with synthetic data <ArrowRight size={17} aria-hidden="true" />
             </Link>
-            <a href="#workflow" className="site-btn site-btn-secondary site-btn-lg">See how it works</a>
+            <a href="#workflow" className="site-btn site-btn-outline-light site-btn-lg">See how it works</a>
           </div>
           <p className="hero-note">
             <ShieldCheck size={15} aria-hidden="true" /> No sign-up needed for the demo · Synthetic data only · Educational, not diagnostic
@@ -35,41 +39,118 @@ export function Hero() {
         </div>
         <HeroVisual />
       </div>
-    </section>
-  );
-}
-
-export function ProofStrip() {
-  const items = [
-    { icon: FileSearch, title: "Every value has a source", body: "Each result opens the page it was read from." },
-    { icon: BadgeCheck, title: "You verify first", body: "Nothing reaches your records until you confirm it." },
-    { icon: BookOpen, title: "Explanations cite sources", body: "Plain language, grounded in an approved library." },
-    { icon: Lock, title: "Yours alone", body: "Records are visible only to your account." },
-  ];
-  return (
-    <section className="proof" aria-label="How MediGuide treats your information">
       <div className="site-container">
-        <div className="proof-grid">
-        {items.map(({ icon: Icon, title, body }) => (
-          <div key={title} className="proof-item" data-reveal>
-            <span className="proof-icon"><Icon size={18} aria-hidden="true" /></span>
-            <div>
-              <h2>{title}</h2>
-              <p>{body}</p>
-            </div>
-          </div>
-        ))}
-        </div>
+        <StatsStrip />
       </div>
     </section>
   );
 }
 
-export function SectionHeading({ eyebrow, title, accent, body, id }: { eyebrow: string; title: string; accent?: string; body?: string; id?: string }) {
+/** Every figure here is a property of the product, not a usage metric. */
+function StatsStrip() {
+  const stats = [
+    { value: "12", label: "Common lab tests tracked across all your reports" },
+    { value: "5", label: "Imaging types organised, from X-ray to PET-CT" },
+    { value: "0", label: "Values saved to your records before you confirm them" },
+    { value: "1 tap", label: "From any result back to its original page" },
+  ];
   return (
-    <div className="section-heading" data-reveal>
+    <dl className="stats">
+      {stats.map((stat) => (
+        <div key={stat.label} className="stat">
+          <dt>{stat.label}</dt>
+          <dd>{stat.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function IconStrip() {
+  const items = [
+    { icon: FileText, label: "Document intelligence" },
+    { icon: TrendingUp, label: "Lab trends" },
+    { icon: ScanLine, label: "Imaging reports" },
+    { icon: Pill, label: "Medication labels" },
+    { icon: MessageCircleQuestion, label: "Ask MediGuide" },
+    { icon: ClipboardList, label: "Visit preparation" },
+  ];
+  return (
+    <nav className="icon-strip" aria-label="Features">
+      <ul className="site-container">
+        {items.map(({ icon: Icon, label }) => (
+          <li key={label}>
+            <a href="#features">
+              <span className="icon-strip-icon"><Icon size={20} aria-hidden="true" /></span>
+              {label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+export function FeatureCards() {
+  return (
+    <div className="feature-cards">
+      <article className="feature-card" data-reveal>
+        <div className="feature-card-media">
+          <Image
+            src={reportPhoto}
+            alt="A man at his kitchen table comparing a printed lab report with his laptop"
+            sizes="(max-width: 760px) 92vw, (max-width: 1080px) 46vw, 380px"
+            placeholder="blur"
+          />
+        </div>
+        <div className="feature-card-body">
+          <p className="feature-card-kicker"><FileText size={15} aria-hidden="true" /> Lab reports</p>
+          <h3>Read every value, with its page beside it.</h3>
+          <p>Upload a PDF or a photo and review each test, unit and printed range before anything is saved.</p>
+          <Link href={DEMO_HREF} className="site-link-arrow" prefetch={false}>Try the sample report <ArrowRight size={15} aria-hidden="true" /></Link>
+        </div>
+      </article>
+
+      <article className="feature-card feature-card-ui" data-reveal>
+        <div className="feature-card-media feature-card-chart" aria-hidden="true">
+          <div className="feature-chart-frame">
+            <p className="feature-chart-title">Hemoglobin A1C <span>3 reports</span></p>
+            <TrendChart />
+          </div>
+        </div>
+        <div className="feature-card-body">
+          <p className="feature-card-kicker"><TrendingUp size={15} aria-hidden="true" /> Lab trends</p>
+          <h3>See how a result changes across reports.</h3>
+          <p>Confirmed values line up by test and date, each against the range its own report printed.</p>
+          <Link href="/workspace/labs" className="site-link-arrow" prefetch={false}>Open Labs <ArrowRight size={15} aria-hidden="true" /></Link>
+        </div>
+      </article>
+
+      <article className="feature-card" data-reveal>
+        <div className="feature-card-media">
+          <Image
+            src={medicationPhoto}
+            alt="A man reading the label on a prescription bottle while looking at his laptop"
+            sizes="(max-width: 760px) 92vw, (max-width: 1080px) 46vw, 380px"
+            placeholder="blur"
+          />
+        </div>
+        <div className="feature-card-body">
+          <p className="feature-card-kicker"><Pill size={15} aria-hidden="true" /> Medications</p>
+          <h3>Know exactly what the label says.</h3>
+          <p>Photograph a pharmacy label, confirm the name, strength and directions, then learn about it.</p>
+          <Link href="/workspace/medications" className="site-link-arrow" prefetch={false}>Open Medications <ArrowRight size={15} aria-hidden="true" /></Link>
+        </div>
+      </article>
+    </div>
+  );
+}
+
+export function SectionHeading({ eyebrow, title, accent, body, id, centered = false }: { eyebrow: string; title: string; accent?: string; body?: string; id?: string; centered?: boolean }) {
+  return (
+    <div className={centered ? "section-heading is-centered" : "section-heading"} data-reveal>
       <p className="eyebrow">{eyebrow}</p>
-      <h2 id={id}>{title}{accent ? <> <em>{accent}</em></> : null}</h2>
+      <h2 id={id}>{title}{accent ? <> <span className="heading-accent">{accent}</span></> : null}</h2>
       {body && <p className="section-lead">{body}</p>}
     </div>
   );
@@ -236,13 +317,25 @@ export function FinalCta() {
   return (
     <section className="final-cta" aria-labelledby="final-cta-title">
       <div className="site-container final-cta-inner" data-reveal>
-        <h2 id="final-cta-title">See your reports become <em>something you can follow.</em></h2>
-        <p>Load the synthetic three-report sample, review it, and follow a value back to its page. It takes about a minute.</p>
-        <div className="hero-actions">
-          <Link href={DEMO_HREF} className="site-btn site-btn-light site-btn-lg" prefetch={false}>
-            Try it with synthetic data <ArrowRight size={17} aria-hidden="true" />
-          </Link>
-          <Link href="/signin?mode=register" className="site-btn site-btn-ghost-light site-btn-lg">Create an account</Link>
+        <div className="final-cta-copy">
+          <p className="eyebrow eyebrow-on-band">Try it in about a minute</p>
+          <h2 id="final-cta-title">See your reports become <span className="hero-accent">something you can follow.</span></h2>
+          <p>Load the synthetic three-report sample, review it, and follow a value back to its page.</p>
+          <div className="hero-actions">
+            <Link href={DEMO_HREF} className="site-btn site-btn-lime site-btn-lg" prefetch={false}>
+              Try it with synthetic data <ArrowRight size={17} aria-hidden="true" />
+            </Link>
+            <Link href="/signin?mode=register" className="site-btn site-btn-outline-light site-btn-lg" prefetch={false}>Create an account</Link>
+          </div>
+        </div>
+        <div className="final-cta-card" aria-hidden="true">
+          <p className="final-cta-card-title"><BadgeCheck size={16} /> Report confirmed</p>
+          <ul>
+            {REPORT_ROWS.slice(0, 3).map((row) => (
+              <li key={row.test}><span>{row.test}</span><strong>{row.value} {row.unit}</strong></li>
+            ))}
+          </ul>
+          <p className="final-cta-card-foot"><FileSearch size={14} /> Each value links to page 3</p>
         </div>
       </div>
     </section>
