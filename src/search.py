@@ -50,7 +50,12 @@ async def search_endpoint(q: str = "", user: User = Depends(require_user)) -> di
     return {"query": query, "results": results, "total": len(results)}
 
 
-def _entry_to_result(entry: dict[str, Any]) -> dict[str, Any]:
+def _entry_to_result(
+    entry: dict[str, Any], measurement: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """``measurement`` is the lab value the query matched, if any: the hit
+    then opens on that value's own page with that field highlighted,
+    rather than on the report's first page."""
     return {
         "result_id": entry["entry_id"],
         "type": entry["event_type"],
@@ -58,7 +63,8 @@ def _entry_to_result(entry: dict[str, Any]) -> dict[str, Any]:
         "subtitle": entry["subtitle"],
         "date": entry["date"],
         "document_id": entry["document_id"],
-        "page_number": entry["page_number"],
+        "page_number": measurement["page_number"] if measurement else entry["page_number"],
+        "field_id": measurement["field_id"] if measurement else None,
         "verification_status": "verified",
         "route": entry["route"],
     }
@@ -75,6 +81,7 @@ def _section_to_result(section: ImagingReportSection, study: ImagingStudy) -> di
         "date": study.study_date.isoformat() if study.study_date else None,
         "document_id": section.document_id,
         "page_number": section.page_number,
+        "field_id": None,
         "verification_status": "verified",
         "route": f"/workspace/imaging/{study.id}",
     }
@@ -110,17 +117,22 @@ def run_search(session: Session, query: str, *, owner_id: str | None) -> list[di
         result_type = entry["event_type"]
         if per_type_counts.get(result_type, 0) >= PER_TYPE_CAP:
             continue
-        matched = (
-            needle in entry["title"].lower()
-            or needle in entry["subtitle"].lower()
-            or any(
-                needle in measurement["test_name"].lower()
-                or measurement["test_code"] == alias_code
+        matched_measurement = next(
+            (
+                measurement
                 for measurement in (entry["measurements"] or [])
-            )
+                if needle in measurement["test_name"].lower()
+                or measurement["test_code"] == alias_code
+            ),
+            None,
+        )
+        matched = (
+            matched_measurement is not None
+            or needle in entry["title"].lower()
+            or needle in entry["subtitle"].lower()
         )
         if matched:
-            hits.append(_entry_to_result(entry))
+            hits.append(_entry_to_result(entry, matched_measurement))
             per_type_counts[result_type] = per_type_counts.get(result_type, 0) + 1
 
     hits.extend(_search_imaging_report_sections(

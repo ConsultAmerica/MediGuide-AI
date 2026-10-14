@@ -24,19 +24,21 @@ import { ImagingHistory } from "./ImagingHistory";
 import { ImagingCompare } from "./ImagingCompare";
 import { ImagingTerminology } from "./ImagingTerminology";
 import { ImagingErrorBanner } from "./ImagingErrorState";
+import { imagingUrl, type ImagingRoute } from "./imaging-route";
 
 export function ImagingWorkspace({
   apiUrl,
   pushToast,
-  openStudyId,
+  route,
 }: {
   apiUrl: string;
   pushToast: (message: string, tone?: ToastTone) => void;
-  /** Set by the Health Timeline's "View study" cross-link — jumps straight
-   * to that study's detail view on mount, bypassing the modality browser. */
-  openStudyId?: string | null;
+  /** Which screen to show, parsed from the URL (see imaging-route.ts).
+   * Navigation inside Imaging changes the URL, never this view directly. */
+  route: ImagingRoute;
 }) {
   const router = useRouter();
+  const go = (next: ImagingRoute) => router.push(imagingUrl(next));
   const [view, setView] = useState<ImagingView>("landing");
   const [modalities, setModalities] = useState<ModalitySummary[]>([]);
   const [studies, setStudies] = useState<ImagingStudy[]>([]);
@@ -111,14 +113,43 @@ export function ImagingWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiUrl]);
 
+  // URL -> screen. Keyed on the route itself (tab excluded: switching tabs
+  // only records the tab, it doesn't reload the study).
+  const routeKey = route.kind === "detail" ? `detail:${route.studyId}:${route.page ?? ""}` : imagingUrl(route);
   useEffect(() => {
-    if (!openStudyId) return;
-    imagingApi
-      .fetchStudy(apiUrl, openStudyId)
-      .then((study) => openStudy(study))
-      .catch((err) => setError(err instanceof Error ? err.message : "Could not open this study."));
+    /* eslint-disable react-hooks/set-state-in-effect -- syncing from the URL, an external source */
+    switch (route.kind) {
+      case "landing":
+        setView("landing");
+        break;
+      case "list":
+        void loadStudies(route.modality);
+        break;
+      case "history":
+        void openHistory();
+        break;
+      case "compare":
+        void openCompare(route.withStudyId);
+        break;
+      case "detail":
+        if (selectedStudy?.study_id === route.studyId) {
+          setView("detail");
+          if (route.page) setSelectedPage(route.page);
+        } else {
+          imagingApi
+            .fetchStudy(apiUrl, route.studyId)
+            .then((study) => openStudy(study, route.page ?? 1))
+            .catch((err) => setError(err instanceof Error ? err.message : "Could not open this study."));
+        }
+        break;
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openStudyId]);
+  }, [routeKey]);
+
+  function goToStudy(study: ImagingStudy, extra: { tab?: "source"; page?: number } = {}) {
+    go({ kind: "detail", studyId: study.study_id, tab: extra.tab ?? null, page: extra.page ?? null });
+  }
 
   async function loadStudies(modality: Modality) {
     setError("");
@@ -204,6 +235,7 @@ export function ImagingWorkspace({
       setNewInstitution("");
       await loadModalities();
       await openStudy(study);
+      goToStudy(study);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create this study.");
     } finally {
@@ -225,6 +257,7 @@ export function ImagingWorkspace({
       });
       await loadModalities();
       await openStudy(study);
+      goToStudy(study);
       setLoading("");
       const file = await imagingApi.downloadImagingSample(apiUrl, sample.slug, sample.filename);
       await uploadReport(file);
@@ -246,9 +279,12 @@ export function ImagingWorkspace({
     // upload response itself — that single request only returns once
     // extraction finishes (success or failure), so this is the only way to
     // show live stage/retry progress while it's still in flight.
+    // Late answers from a poll still in flight when the upload settles are
+    // dropped, so stale progress never reappears on screen.
+    let pollingStopped = false;
     const pollTimer = window.setInterval(async () => {
       const status = await imagingApi.fetchReportStatus(apiUrl, studyId);
-      if (status && status.stage) {
+      if (!pollingStopped && status && status.stage) {
         setProcessingProgress({
           stage: status.stage,
           retryAttempt: status.retry_attempt,
@@ -270,6 +306,7 @@ export function ImagingWorkspace({
       setTransientStatus("failed");
       setProcessingError(err instanceof Error ? err.message : "MediGuide could not read this imaging report.");
     } finally {
+      pollingStopped = true;
       window.clearInterval(pollTimer);
       setProcessingProgress(null);
     }
@@ -364,8 +401,9 @@ export function ImagingWorkspace({
     try {
       await imagingApi.deleteStudy(apiUrl, studyId);
       pushToast("Imaging study deleted", "info");
-      setView("landing");
       setSelectedStudy(null);
+      // Replace, so Back doesn't return to a study that no longer exists.
+      router.replace(imagingUrl({ kind: "landing" }));
       await loadModalities();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete this study.");
@@ -389,7 +427,7 @@ export function ImagingWorkspace({
     }
   }
 
-  async function openCompare(presetStudy?: ImagingStudy) {
+  async function openCompare(presetStudyId?: string | null) {
     setError("");
     setCompareResult(null);
     setLoading("Loading verified studies...");
@@ -400,8 +438,8 @@ export function ImagingWorkspace({
         (study: ImagingStudy) => study.verification_status === "verified" && study.report_document_id,
       );
       setCompareCandidates(verified);
-      if (presetStudy) {
-        setCompareA(presetStudy.study_id);
+      if (presetStudyId) {
+        setCompareA(presetStudyId);
         setCompareB("");
       }
       setView("compare");
@@ -434,6 +472,7 @@ export function ImagingWorkspace({
     if (!study) return;
     await openStudy(study, pageNumber || 1);
     setViewerExpanded(true);
+    goToStudy(study, { page: pageNumber || 1 });
   }
 
   function openTerminology(term: string, sourceExcerpt: string) {
@@ -486,9 +525,9 @@ export function ImagingWorkspace({
           newInstitution={newInstitution}
           setNewInstitution={setNewInstitution}
           onCreateStudy={() => void createStudy()}
-          onSelectModality={(modality) => void loadStudies(modality)}
-          onOpenHistory={() => void openHistory()}
-          onOpenCompare={() => void openCompare()}
+          onSelectModality={(modality) => go({ kind: "list", modality })}
+          onOpenHistory={() => go({ kind: "history" })}
+          onOpenCompare={() => go({ kind: "compare", withStudyId: null })}
           onTrySample={(sample) => void trySampleReport(sample)}
         />
       )}
@@ -499,13 +538,20 @@ export function ImagingWorkspace({
           studies={filteredStudies}
           search={search}
           setSearch={setSearch}
-          onBack={() => setView("landing")}
-          onOpenStudy={(study) => void openStudy(study)}
+          onBack={() => go({ kind: "landing" })}
+          onOpenStudy={(study) => { void openStudy(study); goToStudy(study); }}
         />
       )}
 
       {view === "detail" && selectedStudy && (
         <ImagingStudyDetail
+          key={selectedStudy.study_id}
+          initialTab={route.kind === "detail" ? route.tab : null}
+          onTabChange={(tab) => {
+            if (route.kind === "detail" && route.tab !== tab) {
+              router.replace(imagingUrl({ ...route, tab }));
+            }
+          }}
           apiUrl={apiUrl}
           study={selectedStudy}
           sections={sections}
@@ -529,9 +575,9 @@ export function ImagingWorkspace({
           processingProgress={processingProgress}
           confirming={confirming}
           confirmingFindings={confirmingFindings}
-          onBack={() => setView(selectedModality ? "list" : "landing")}
-          onOpenHistory={() => void openHistory()}
-          onOpenCompare={() => void openCompare(selectedStudy)}
+          onBack={() => go({ kind: "list", modality: selectedStudy.modality })}
+          onOpenHistory={() => go({ kind: "history" })}
+          onOpenCompare={() => go({ kind: "compare", withStudyId: selectedStudy.study_id })}
           onUploadReport={(file) => void uploadReport(file)}
           onRetryUpload={retryUpload}
           onViewExistingReport={viewExistingReport}
@@ -560,9 +606,9 @@ export function ImagingWorkspace({
           regionFilter={historyRegionFilter}
           setRegionFilter={setHistoryRegionFilter}
           onApplyFilters={() => void openHistory()}
-          onBack={() => setView("landing")}
-          onOpenStudy={(study) => void openStudy(study)}
-          onCompareStudy={(study) => void openCompare(study)}
+          onBack={() => go({ kind: "landing" })}
+          onOpenStudy={(study) => { void openStudy(study); goToStudy(study); }}
+          onCompareStudy={(study) => go({ kind: "compare", withStudyId: study.study_id })}
         />
       )}
 
@@ -577,7 +623,7 @@ export function ImagingWorkspace({
           setSameModalityOnly={setCompareSameModalityOnly}
           result={compareResult}
           onRunCompare={() => void runCompare()}
-          onBack={() => setView("landing")}
+          onBack={() => go({ kind: "landing" })}
           onViewSource={(documentId, page) => void viewCompareSource(documentId, page)}
         />
       )}

@@ -1,15 +1,5 @@
-"use client";
-
-import { useParams } from "next/navigation";
-import { ImagingWorkspace } from "../ImagingWorkspace";
-import { useWorkspaceContext } from "../../_state/WorkspaceStateProvider";
-import { API_URL } from "../../_state/workspace-shared";
-
-// Path-based counterpart to /workspace/imaging?openStudy=:id (kept working
-// too, for one release, so no in-flight bookmark breaks) — matches the
-// /workspace/documents/:id pattern for a stable, bookmarkable study URL.
+// A study's own URL. Rendering happens in ../layout.tsx, which reads the id
+// from the path (see imaging-route.ts).
 export default function ImagingStudyDetailPage() {
-  const params = useParams<{ id: string }>();
-  const { pushToast } = useWorkspaceContext();
-  return <ImagingWorkspace apiUrl={API_URL} pushToast={pushToast} openStudyId={params.id} />;
+  return null;
 }

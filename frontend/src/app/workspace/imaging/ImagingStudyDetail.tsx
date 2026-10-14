@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, GitCompare, History, Maximize2, Minimize2, ScanLine, Trash2 } from "lucide-react";
 import {
   MODALITY_LABELS,
@@ -21,7 +21,8 @@ import { ImagingProcessingFailedState } from "./ImagingErrorState";
 import { reportPagePreviewUrl } from "./imaging-api";
 import { AuthImage } from "../_components/AuthImage";
 
-type DetailTab = "overview" | "report" | "images" | "explanation" | "source";
+export type DetailTab = "overview" | "report" | "images" | "explanation" | "source";
+export const DETAIL_TABS: readonly DetailTab[] = ["overview", "report", "images", "explanation", "source"];
 
 export function ImagingStudyDetail({
   apiUrl,
@@ -62,6 +63,8 @@ export function ImagingStudyDetail({
   onOpenTerminology,
   onAddToVisit,
   onOpenSourceDocument,
+  initialTab,
+  onTabChange,
 }: {
   apiUrl: string;
   study: ImagingStudy;
@@ -101,6 +104,9 @@ export function ImagingStudyDetail({
   onOpenTerminology: (term: string, sourceExcerpt: string) => void;
   onAddToVisit: () => void;
   onOpenSourceDocument: (documentId: string, page: number) => void;
+  /** Tab from the URL (e.g. after a refresh); otherwise one is chosen. */
+  initialTab?: DetailTab | null;
+  onTabChange?: (tab: DetailTab) => void;
 }) {
   const state = deriveReportState(study, sections, transientStatus);
   const previewUrl = study.report_document_id ? reportPagePreviewUrl(apiUrl, study.study_id, selectedPage) : "";
@@ -108,7 +114,15 @@ export function ImagingStudyDetail({
   const pendingFindings = findings.filter((f) => f.verification_status === "unverified");
   const canShowOverview = confirmedFindings.length > 0;
 
-  const [tab, setTab] = useState<DetailTab>(canShowOverview ? "overview" : "report");
+  const [tab, setTabState] = useState<DetailTab>(initialTab ?? (canShowOverview ? "overview" : "report"));
+  // Once a tab was asked for (by the URL or a click), it is never
+  // overridden by the automatic jump to Overview below.
+  const tabChosen = useRef(Boolean(initialTab));
+  function setTab(next: DetailTab) {
+    tabChosen.current = true;
+    setTabState(next);
+    onTabChange?.(next);
+  }
   const [previewFailed, setPreviewFailed] = useState(false);
   const [activeFinding, setActiveFinding] = useState<ImagingFinding | null>(null);
 
@@ -118,9 +132,9 @@ export function ImagingStudyDetail({
   }, [previewUrl]);
 
   useEffect(() => {
-    if (study.verification_status === "verified" && canShowOverview) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setTab("overview");
+    if (study.verification_status === "verified" && canShowOverview && !tabChosen.current) {
+      // Not recorded in the URL: a refresh repeats this same default.
+      setTabState("overview");
     }
   }, [study.verification_status, canShowOverview]);
 

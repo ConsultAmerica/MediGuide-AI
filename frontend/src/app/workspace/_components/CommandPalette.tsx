@@ -17,6 +17,8 @@ interface SearchResult {
   date: string | null;
   document_id: string | null;
   page_number: number | null;
+  /** The lab value the query matched, so the hit opens with it highlighted. */
+  field_id?: string | null;
   verification_status: string;
   route: string;
 }
@@ -76,6 +78,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "ready">("idle");
   const [error, setError] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  // Bumped by "Try again" so the same query is fetched once more.
+  const [attempt, setAttempt] = useState(0);
 
   const titleId = useId();
   const listboxId = useId();
@@ -137,16 +141,18 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         setStatus("error");
       }
     })();
-  }, [debouncedQuery]);
-
-  const items: PaletteItem[] = useMemo(() => {
-    if (!isSearching) {
-      return QUICK_COMMANDS.map((command) => ({ kind: "command" as const, ...command }));
-    }
-    return results.map((result) => ({ kind: "result" as const, result }));
-  }, [isSearching, results]);
+  }, [debouncedQuery, attempt]);
 
   const groups = useMemo(() => (isSearching ? groupResults(results) : null), [isSearching, results]);
+
+  // Built from the grouped order the list renders in, so the highlighted
+  // option and the one Enter opens are always the same result.
+  const items: PaletteItem[] = useMemo(() => {
+    if (!groups) {
+      return QUICK_COMMANDS.map((command) => ({ kind: "command" as const, ...command }));
+    }
+    return groups.flatMap((group) => group.items.map((result) => ({ kind: "result" as const, result })));
+  }, [groups]);
 
   function openItem(item: PaletteItem) {
     if (item.kind === "command") {
@@ -156,7 +162,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     }
     const { result } = item;
     if ((result.type === "laboratory" || result.type === "document") && result.document_id) {
-      void inspectDocument(result.document_id, result.page_number ?? 1);
+      void inspectDocument(result.document_id, result.page_number ?? 1, result.field_id ?? undefined);
     } else {
       router.push(result.route);
     }
@@ -234,7 +240,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           {status === "error" && (
             <div className="command-palette-status">
               <p>{error}</p>
-              <button type="button" className="quiet-button" onClick={() => setQuery((current) => `${current}`)}>Try again</button>
+              <button type="button" className="quiet-button" onClick={() => setAttempt((value) => value + 1)}>Try again</button>
             </div>
           )}
           {isSearching && status === "ready" && results.length === 0 && (

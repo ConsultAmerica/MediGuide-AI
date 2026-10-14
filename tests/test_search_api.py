@@ -110,6 +110,19 @@ def test_search_finds_lab_observation_by_alias(api_client):
     assert "Lab Report" in titles
 
 
+def test_lab_hit_carries_the_matched_field_and_its_page(api_client):
+    """A lab hit opens on the matched value itself, not just the report."""
+    _upsert_lab_document("doc-1", "labs.pdf", "HbA1c", owner_id=current_user_id(api_client))
+
+    lab = next(r for r in api_client.get("/api/search", params={"q": "a1c"}).json()["results"] if r["type"] == "laboratory")
+    assert lab["field_id"] == "field-doc-1"
+    assert lab["page_number"] == 1
+
+    # A title-only match has no single field to point at.
+    title_hit = next(r for r in api_client.get("/api/search", params={"q": "lab report"}).json()["results"] if r["type"] == "laboratory")
+    assert title_hit["field_id"] is None
+
+
 def test_search_excludes_unconfirmed_document(api_client):
     from src.database.models import Document
     from src.database.session import session_scope

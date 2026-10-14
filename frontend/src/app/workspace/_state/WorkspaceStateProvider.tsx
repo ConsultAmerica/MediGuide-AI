@@ -291,10 +291,14 @@ function useWorkspaceState() {
       failed: "Document processing failed",
     };
 
+    // A poll can still be in flight when processing finishes; once stopped,
+    // its late answer must not put a stale "Preparing review..." stage back
+    // (that left the review stuck with Confirm disabled).
+    let pollingStopped = false;
     const pollStatus = window.setInterval(async () => {
       try {
         const statusResponse = await apiFetch(`${API_URL}/api/documents/v2/${documentId}/status`);
-        if (!statusResponse.ok) return;
+        if (pollingStopped || !statusResponse.ok) return;
         const status = (await statusResponse.json()) as {
           status?: string;
           filename?: string;
@@ -302,6 +306,7 @@ function useWorkspaceState() {
           retry_attempt?: number;
           retry_max?: number;
         };
+        if (pollingStopped) return;
         const label = statusLabels[status.status || ""] || "Processing document...";
         setLoadingStage(label);
         setProcessStage(mapStatusToProcessStage(status.status || "", label));
@@ -330,6 +335,7 @@ function useWorkspaceState() {
 
       return response.json() as Promise<DocState>;
     } finally {
+      pollingStopped = true;
       if (pollTimer) window.clearInterval(pollTimer);
       setProcessRetry(null);
     }
@@ -527,7 +533,7 @@ function useWorkspaceState() {
           setSourceBreadcrumb(`Documents / ${processed.filename || "Document"} / Page ${pageNumber || 1}`);
         }
       } else if (response.status === 404) {
-        setError("This document session has expired. Upload the report again to review it in the workspace.");
+        setError("This document isn't available. It may have been deleted, or it belongs to a different account.");
         handleViewChange("documents");
       } else {
         throw new Error("Could not open this document.");
