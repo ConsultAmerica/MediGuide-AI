@@ -44,6 +44,7 @@ import {
   type AnswerStatus,
 } from "./_state/workspace-shared";
 import { AuthImage } from "./_components/AuthImage";
+import { LabTrendChart } from "./_components/LabTrendChart";
 export function Conversation({ answer, status, streaming, sources, messages, loading, error, selectedSource, setSelectedSource, onRetry, onPreset, onOpenView, onOpenDocumentPage, onUpload, onAction }: { answer: string; status: AnswerStatus; streaming: boolean; sources: Source[]; question: string; messages: Message[]; loading: string; error: string; selectedSource: number | null; setSelectedSource: (value: number | null) => void; onRetry: () => void; onPreset: (prompt: string) => void; onOpenView: (view: View) => void; onOpenDocumentPage: (page: number) => void; onUpload: () => void; onAction: (action: "copy" | "listen" | "simple" | "questions") => void }) {
   const lastQuestion = [...messages].reverse().find((item) => item.role === "user");
   const empty = !answer && !loading && !lastQuestion;
@@ -899,7 +900,6 @@ export function LabTimeline({
   onRequestDeleteObservation: (observationId: string) => void;
   onOpenDocuments: () => void;
 }) {
-  const maxValue = Math.max(...points.map((point) => point.value ?? 0), 1);
   const activeTest = (tests.find((test) => test.test_code === selectedCode)?.display_name) || selectedCode;
   const selectedDate = selectedPoint?.collection_date || selectedPoint?.report_date;
   const selectedPage = selectedPoint?.source_page || selectedPoint?.page_number || 1;
@@ -944,16 +944,13 @@ export function LabTimeline({
 
     <div className="lab-chart-panel">
       {points.length ? (
-        <div className="lab-chart" role="list" aria-label={`${activeTest} timeline`}>
-          {points.map((point) => {
-            const height = Math.max(12, ((point.value ?? 0) / maxValue) * 100);
-            return <button type="button" key={point.observation_id} className={selectedPoint?.observation_id === point.observation_id ? "lab-point selected" : "lab-point"} style={{ height: `${height}%` }} onClick={() => onSelectPoint(point)} role="listitem" title={`${point.value_text} ${point.unit}`}>
-              <span className="lab-point-dot" />
-              <strong>{point.value_text}</strong>
-              <small>{formatCollectionDate(point.collection_date || point.report_date)}</small>
-            </button>;
-          })}
-        </div>
+        <LabTrendChart
+          points={points}
+          selectedId={selectedPoint?.observation_id}
+          onSelect={onSelectPoint}
+          formatDate={formatCollectionDate}
+          testName={activeTest}
+        />
       ) : (
         <EmptyState
           title="No verified measurements yet"
@@ -969,7 +966,19 @@ export function LabTimeline({
       <thead><tr><th>Date</th><th>Result</th><th>Report flag</th><th>Source</th></tr></thead>
       <tbody>
         {points.map((point) => (
-          <tr key={point.observation_id} className={selectedPoint?.observation_id === point.observation_id ? "selected" : ""} onClick={() => onSelectPoint(point)}>
+          <tr
+            key={point.observation_id}
+            className={selectedPoint?.observation_id === point.observation_id ? "selected" : ""}
+            onClick={() => onSelectPoint(point)}
+            tabIndex={0}
+            aria-label={`${point.value_text} ${point.unit}, ${formatCollectionDate(point.collection_date || point.report_date)}. Open provenance`}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSelectPoint(point);
+              }
+            }}
+          >
             <td>{formatCollectionDate(point.collection_date || point.report_date)}</td>
             <td>{point.value_text} {point.unit}</td>
             <td>{point.source_flag === "H" ? "High" : point.source_flag === "L" ? "Low" : reportFlagLabel(point.range_status) || "—"}</td>

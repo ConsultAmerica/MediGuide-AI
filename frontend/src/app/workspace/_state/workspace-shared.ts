@@ -48,6 +48,9 @@ export type LabPoint = {
   source_flag?: string;
   reference_text?: string;
   reference_range?: string;
+  /** Parsed from the printed range when it is numeric (null otherwise). */
+  reference_low?: number | null;
+  reference_high?: number | null;
   change_from_previous?: number | null;
   change_direction?: "up" | "down" | "unchanged" | null;
 };

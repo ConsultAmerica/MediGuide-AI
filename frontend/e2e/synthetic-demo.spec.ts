@@ -47,7 +47,8 @@ test.describe("Synthetic demo — canonical journey", () => {
     // Labs: three synthetic dates, selectable, with source drill-down.
     await page.locator("aside").getByRole("button", { name: "Labs", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Labs" })).toBeVisible();
-    const points = page.locator(".lab-point");
+    // Chart points are buttons named "<value> <unit>, <date>. Open provenance".
+    const points = page.locator(".lab-trend-chart").getByRole("button", { name: /Open provenance/ });
     await expect(points).toHaveCount(3, { timeout: 15_000 });
 
     // Aug 12 is the latest/rightmost synthetic point — select it directly.

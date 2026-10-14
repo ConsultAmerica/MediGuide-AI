@@ -24,6 +24,10 @@ import {
 // dedicated workflow" branch.
 const COMPOSER_ROUTES = new Set(["/workspace/ask", "/workspace/sources"]);
 
+// The citations panel only appears where citations can exist; elsewhere the
+// page gets the full width instead of an empty side column.
+const EVIDENCE_ROUTE_PREFIXES = ["/workspace/ask", "/workspace/sources", "/workspace/documents"];
+
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const {
@@ -48,6 +52,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   } = useWorkspaceContext();
 
   const showComposer = COMPOSER_ROUTES.has(pathname);
+  const showEvidence = EVIDENCE_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   useEffect(() => {
@@ -68,10 +73,9 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   return (
     <main className="product-shell workspace-enter">
       <header className="app-header">
-        <button className="app-brand" onClick={() => router.push("/")} aria-label="MediGuide home">
-          <BrandLogo variant="mark" className="brand-logo-header" />
+        <button className="app-brand" onClick={() => router.push("/")} aria-label="MediGuide home page">
+          <BrandLogo variant="wordmark" className="brand-logo-header" />
         </button>
-        <button className="quiet-button header-home" type="button" onClick={() => router.push("/")}>Home</button>
         <span className="header-context">Health Document Intelligence</span>
         <div className="header-actions">
           <select className="language-select" value={language} onChange={(event) => void translateAnswer(event.target.value)} aria-label="Response language">
@@ -86,7 +90,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         <button className="mobile-menu icon-button" title="Open navigation" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}><Menu size={20} /></button>
       </header>
       {mobileNavOpen && <button className="mobile-nav-backdrop" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />}
-      <div className={mobileNavOpen ? "workspace-grid mobile-nav-visible" : "workspace-grid"}>
+      <div className={`workspace-grid${mobileNavOpen ? " mobile-nav-visible" : ""}${showEvidence ? "" : " no-evidence"}`}>
         <Sidebar onClose={() => setMobileNavOpen(false)} />
         <section className="main-panel">
           {children}
@@ -121,13 +125,15 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
           <input ref={fileInput} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,image/*" hidden onChange={onFileChange} />
           <input ref={medFileInput} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,image/*" hidden onChange={onMedFileChange} />
         </section>
-        <Evidence
-          sources={evidenceSources}
-          selected={selectedSource}
-          onSelect={setSelectedSource}
-          context={evidenceContext}
-          onOpenSources={() => handleViewChange("sources")}
-        />
+        {showEvidence && (
+          <Evidence
+            sources={evidenceSources}
+            selected={selectedSource}
+            onSelect={setSelectedSource}
+            context={evidenceContext}
+            onOpenSources={() => handleViewChange("sources")}
+          />
+        )}
       </div>
       <ToastStack toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((item) => item.id !== id))} />
       <ConfirmDialog
