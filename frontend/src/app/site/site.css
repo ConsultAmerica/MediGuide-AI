@@ -17,7 +17,7 @@
 }
 
 .site *:focus-visible {
-  outline: 3px solid var(--mg-focus);
+  outline: var(--mg-focus-ring);
   outline-offset: 2px;
   border-radius: 6px;
 }
@@ -767,7 +767,7 @@
 /* --------------------------------------------------------------- sections */
 
 .site .site-section {
-  padding: clamp(80px, 10vw, 128px) 0;
+  padding: var(--mg-section-y) 0;
 }
 
 .site .site-section-soft,
@@ -777,7 +777,7 @@
 
 .site .section-heading {
   max-width: 760px;
-  margin-bottom: clamp(40px, 6vw, 60px);
+  margin-bottom: var(--mg-section-head-gap);
 }
 
 .site .section-heading.is-centered {
@@ -1548,8 +1548,8 @@
   transition: height 0.45s var(--mg-ease);
 }
 
-/* All slides share the tallest slide's height (set by FeatureCarousel);
-   content is centred so copy and illustration stay balanced. */
+/* The viewport takes the active slide's height (set by FeatureCarousel);
+   other slides are clipped by the viewport while off screen. */
 .site .carousel-track {
   display: flex;
   align-items: stretch;
@@ -2374,7 +2374,7 @@
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  padding: clamp(96px, 12vw, 150px) 0;
+  padding: clamp(80px, 9vw, 120px) 0;
   background: var(--mg-band);
   color: #fff;
 }

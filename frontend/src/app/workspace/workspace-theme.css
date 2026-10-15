@@ -6,11 +6,11 @@
 .product-shell {
   background: var(--mg-ivory);
   color: var(--mg-text);
-  font-family: var(--font-landing-sans), "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  font-family: var(--mg-font-ui);
 }
 
 .product-shell *:focus-visible {
-  outline: 3px solid var(--mg-focus);
+  outline: var(--mg-focus-ring);
   outline-offset: 2px;
 }
 
@@ -359,8 +359,18 @@
 }
 
 .product-shell :is(.forest-button, .drawer-action, .quiet-button, .accent-button, .ghost-button):focus-visible {
-  outline: 3px solid var(--mg-plum);
+  outline: var(--mg-focus-ring);
   outline-offset: 2px;
+}
+
+/* Destructive (outlined): a delete that still asks for confirmation. */
+.product-shell .quiet-button.destructive-action {
+  border-color: var(--mg-error) !important;
+  color: var(--mg-error-text) !important;
+}
+
+.product-shell .quiet-button.destructive-action:hover:not(:disabled) {
+  background: var(--mg-error-soft);
 }
 
 .product-shell .forest-button.destructive-confirm,
@@ -384,7 +394,7 @@
 .product-shell .doc-explain-card {
   background: var(--mg-surface);
   border: 1px solid var(--mg-border);
-  border-radius: 20px;
+  border-radius: var(--mg-radius-card);
   box-shadow: var(--mg-shadow-1);
 }
 
@@ -420,6 +430,17 @@
 
 .product-shell .home-section-heading {
   margin-bottom: 12px;
+}
+
+/* Dates never break mid-value ("2026-08-" / "12"); the text beside them wraps. */
+.product-shell .recent-history-date {
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.product-shell .recent-history-body {
+  min-width: 0;
 }
 
 .product-shell .recent-history-row,
@@ -791,7 +812,29 @@
 /* -------------------------------------------------------------- timeline */
 
 .product-shell .timeline-entry {
+  grid-template-columns: 64px minmax(0, 1fr) auto;
   padding: 18px 22px;
+}
+
+/* Verified count and the measurements toggle sit side by side with a gap,
+   and wrap onto their own lines when space runs out. */
+.product-shell .timeline-entry-body .lab-verified {
+  margin-right: 14px;
+  vertical-align: middle;
+}
+
+/* workspace.css declares its narrow-screen stack before the base rule, so
+   the three-column grid always won and entries ran off a 375px screen. */
+@media (max-width: 800px) {
+  .product-shell .timeline-entry {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 16px 18px;
+  }
+
+  .product-shell .timeline-entry-action {
+    justify-self: start;
+  }
 }
 
 .product-shell .timeline-entry-date {
@@ -1359,6 +1402,21 @@
 @media (max-width: 800px) {
   .product-shell .page-hero.is-compact {
     padding: 22px 18px 20px;
+  }
+}
+
+/* Phones: header actions pair up two per row instead of one each, so data
+   pages (Labs, document review) reach their content sooner. 40px targets. */
+@media (max-width: 520px) {
+  .product-shell .page-hero .page-hero-actions {
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .product-shell .page-hero .page-hero-actions :is(.forest-button, .quiet-button, .accent-button) {
+    min-height: 40px;
+    padding: 0 14px;
+    font-size: 13px;
   }
 }
 

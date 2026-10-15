@@ -170,10 +170,10 @@ export function Composer({ question, setQuestion, onSubmit, onKeyDown, onUpload,
       <button type="button" onClick={onUpload}><Paperclip size={15} /> Document</button>
       <button type="button" className={recording ? "recording voice-trigger" : "voice-trigger"} onClick={onVoice}><Mic size={15} /> {recording ? "Listening locally" : "Voice"}</button>
       <select className="answer-style-select" value={answerDetail} onChange={(event) => setAnswerDetail(event.target.value as "Concise" | "Standard" | "Detailed")} aria-label="Answer detail">
-        <option>Concise</option><option>Standard</option><option>Detailed</option>
+        <option value="Concise">Concise answer</option><option value="Standard">Standard detail</option><option value="Detailed">Detailed answer</option>
       </select>
       <select className="answer-style-select" value={readingLevel} onChange={(event) => setReadingLevel(event.target.value as "Standard" | "Plain")} aria-label="Reading level">
-        <option>Standard</option><option>Plain</option>
+        <option value="Standard">Standard reading</option><option value="Plain">Plain language</option>
       </select>
       <span className="composer-privacy"><ShieldCheck size={13} /> Private session</span>
     </div>

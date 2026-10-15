@@ -10,6 +10,7 @@ import {
   HelpCircle,
   Home as HomeIcon,
   LogOut,
+  MessageCircleQuestion,
   Milestone,
   Pill,
   PlayCircle,
@@ -99,7 +100,7 @@ export function Sidebar({ onClose }: { onClose: () => void }) {
 
       <div className="sidebar-label">TOOLS</div>
       <nav>
-        <NavItem href="/workspace/ask" label="Ask MediGuide" icon={HomeIcon} onNavigate={navigate} />
+        <NavItem href="/workspace/ask" label="Ask MediGuide" icon={MessageCircleQuestion} onNavigate={navigate} />
         <NavItem href="/workspace/visit" label="Visit Preparation" icon={Stethoscope} onNavigate={navigate} />
       </nav>
 

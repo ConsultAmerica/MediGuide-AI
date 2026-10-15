@@ -121,11 +121,14 @@ export function FeatureCarousel() {
   const count = SLIDES.length;
   const go = (next: number) => setIndex((next + count) % count);
 
-  // One stable height for every slide (the tallest one's), so switching
-  // tabs never shifts the page below. Slides are kept close in height (the
-  // "Planned" note is compact), so centring leaves only a small even margin.
+  // The viewport takes the active slide's own height (animated in CSS).
+  // Sizing every slide to the tallest one left large empty bands on tablet
+  // and mobile, where slide heights differ by up to ~280px. Height changes
+  // only follow a tab, arrow or swipe (there is no autoplay), so the page
+  // below never moves on its own.
   const slideRefs = useRef<(HTMLElement | null)[]>([]);
-  const [viewportHeight, setViewportHeight] = useState<number>();
+  const [slideHeights, setSlideHeights] = useState<number[]>([]);
+  const viewportHeight = slideHeights[index];
   useEffect(() => {
     const slides = slideRefs.current.filter((node): node is HTMLElement => Boolean(node));
     if (!slides.length) return;
@@ -139,7 +142,7 @@ export function FeatureCarousel() {
       const style = getComputedStyle(node);
       return Math.ceil(span + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom));
     };
-    const measure = () => setViewportHeight(Math.max(...slides.map(natural)));
+    const measure = () => setSlideHeights(slides.map(natural));
     measure();
     const observer = new ResizeObserver(measure);
     slides.forEach((node) => Array.from(node.children).forEach((child) => observer.observe(child)));

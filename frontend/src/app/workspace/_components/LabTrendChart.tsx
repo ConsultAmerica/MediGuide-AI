@@ -127,7 +127,13 @@ export function LabTrendChart({
   // Label as many dates/values as fit without overlapping; the last result
   // is always labelled. Unlabelled points still name themselves to screen
   // readers and in their tooltip, and every value is in the table.
-  const dateLabelGap = W < 520 ? 74 : 92;
+  // On a narrow chart, results from a single year drop the repeated year
+  // from the axis ("Jan 15") so each point keeps its date; the full date
+  // stays in every point's accessible name and tooltip.
+  const years = new Set(plotted.map((p) => (dateOf(p) || "").slice(0, 4)));
+  const compactDates = W < 520 && years.size === 1 && !years.has("");
+  const axisDate = (text: string) => (compactDates ? text.replace(/,?\s+\d{4}$/, "") : text);
+  const dateLabelGap = compactDates ? 54 : W < 520 ? 74 : 92;
   const valueLabelGap = 40;
   const showDate: boolean[] = plotted.map(() => false);
   const showValue: boolean[] = plotted.map(() => false);
@@ -189,7 +195,7 @@ export function LabTrendChart({
               <rect className="ltc-hit" x={xs[i] - hitWidth(i) / 2} y={PAD.top - 20} width={hitWidth(i)} height={H - PAD.top + 20} rx="12" />
               <circle className="ltc-dot" cx={xs[i]} cy={y(p.value as number)} r={selected ? 8 : 6.5} />
               {showValue[i] && <text className="ltc-value" x={xs[i]} y={y(p.value as number) - 16} textAnchor="middle">{p.value_text}</text>}
-              {showDate[i] && <text className="ltc-axis" x={xs[i]} y={H - 14} textAnchor="middle">{dateText}</text>}
+              {showDate[i] && <text className="ltc-axis" x={xs[i]} y={H - 14} textAnchor="middle">{axisDate(dateText)}</text>}
             </g>
           );
         })}
