@@ -7,6 +7,7 @@ import {
   BookOpen,
   FileText,
   FlaskConical,
+  HelpCircle,
   Home as HomeIcon,
   LogOut,
   Milestone,
@@ -14,6 +15,7 @@ import {
   PlayCircle,
   Plus,
   ScanLine,
+  Settings,
   ShieldCheck,
   Stethoscope,
   X,
@@ -22,6 +24,7 @@ import { BrandLogo } from "../../brand-logo";
 import Link from "next/link";
 import { useWorkspaceContext } from "../_state/WorkspaceStateProvider";
 import { useAccount } from "./AuthGate";
+import { serviceStateFrom } from "./serviceState";
 
 function NavItem({
   href,
@@ -50,7 +53,11 @@ function NavItem({
 }
 
 export function Sidebar({ onClose }: { onClose: () => void }) {
-  const { setMobileNavOpen, clearSession, setPrivacyOpen, router } = useWorkspaceContext();
+  const {
+    setMobileNavOpen, clearSession, setPrivacyOpen, router,
+    language, translateAnswer, health, setHealthOpen, setHelpOpen, setSettingsOpen,
+  } = useWorkspaceContext();
+  const serviceState = serviceStateFrom(health);
 
   function navigate(href: string) {
     router.push(href);
@@ -65,7 +72,7 @@ export function Sidebar({ onClose }: { onClose: () => void }) {
       </div>
       <div className="sidebar-brand-row">
         <div className="sidebar-brand-block">
-          <BrandLogo variant="wordmark" className="brand-logo-sidebar" />
+          <BrandLogo variant="wordmark" tone="light" className="brand-logo-sidebar" />
         </div>
         <button className="icon-button sidebar-add" title="Upload a document" aria-label="Upload a document" onClick={() => navigate("/workspace/documents?action=upload")}>
           <Plus size={16} />
@@ -106,6 +113,24 @@ export function Sidebar({ onClose }: { onClose: () => void }) {
         <button className="nav-item" onClick={() => { setPrivacyOpen(true); setMobileNavOpen(false); }}><ShieldCheck size={17} /> Privacy</button>
         <NavItem href="/workspace/system" label="System Status" icon={Activity} onNavigate={navigate} />
       </nav>
+
+      {/* Phones only: the header's secondary controls, which don't fit there. */}
+      <div className="mobile-header-controls" aria-label="Workspace controls" role="group">
+        <div className="sidebar-label">PREFERENCES</div>
+        <label className="mobile-language">
+          <span>Response language</span>
+          <select className="language-select" value={language} onChange={(event) => void translateAnswer(event.target.value)}>
+            <option>English</option><option>Spanish</option><option>French</option>
+          </select>
+        </label>
+        <nav>
+          <button className={`nav-item local-pill-row service-${serviceState.tone}`} onClick={() => { setHealthOpen(true); setMobileNavOpen(false); }}>
+            <span className="service-dot" aria-hidden="true" /> Service status <small>{serviceState.label}</small>
+          </button>
+          <button className="nav-item" onClick={() => { setHelpOpen(true); setMobileNavOpen(false); }}><HelpCircle size={17} /> Help</button>
+          <button className="nav-item" onClick={() => { setSettingsOpen(true); setMobileNavOpen(false); }}><Settings size={17} /> Settings</button>
+        </nav>
+      </div>
 
       <AccountFooter />
     </aside>

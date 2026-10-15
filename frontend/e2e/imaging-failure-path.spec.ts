@@ -81,23 +81,23 @@ test.describe("Imaging — failure paths", () => {
     await openImagingAndCreateStudy(page);
     const reportPath = path.join(FIXTURES_DIR, "for-missing-preview.pdf");
     generateReportPdf(reportPath, { exam: "MRI Right Knee", findings: "No acute fracture." });
+    // The page preview can't be served (e.g. its file was cleared).
+    await page.route("**/report/pages/*/preview", (route) => route.fulfill({ status: 404, body: "" }));
     await page.locator(".imaging-upload-label input[type=file]").setInputFiles(reportPath);
     await expect(page.getByText(/sections reviewed/)).toBeVisible({ timeout: 20_000 });
 
-    // Request a page far beyond what was actually rendered (the synthetic
-    // fixture has exactly one page) using the collapsed viewer's own page
-    // navigation — no need to route through "View source page" here.
-    for (let i = 0; i < 5; i += 1) {
-      await page.getByRole("button", { name: "Next page" }).click();
-    }
-    // The image load 404s and the viewer swaps in the honest fallback —
-    // never a broken-image icon, never a fabricated highlight over a page
-    // that doesn't exist.
+    // Page navigation stops at the report's last page (this fixture has one).
+    await expect(page.getByRole("button", { name: "Next page" }).first()).toBeDisabled();
+    // Selecting a section must not draw an outline over a page that isn't shown.
+    await page.locator(".imaging-section-title").first().click();
+    // The image load fails and the viewer swaps in the honest fallback —
+    // never a broken-image icon, never a fabricated highlight.
     const viewer = page.locator(".imaging-viewer").first();
     await expect(viewer.getByText("No preview is available for this page.")).toBeVisible({
       timeout: 10_000,
     });
     await expect(viewer.locator("img")).toHaveCount(0);
+    await expect(viewer.locator(".imaging-source-region")).toHaveCount(0);
   });
 
   test("comparing an unconfirmed report is rejected with a clear message", async ({ page }) => {

@@ -8,6 +8,7 @@ import type {
   Modality,
   ModalitySummary,
   ReportGap,
+  ReportLineItem,
   ReportSection,
 } from "./imaging-types";
 
@@ -133,6 +134,49 @@ export function confirmSections(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ reviewed: true, sections: edits, confirm_types: confirmTypes }),
   }).then((r) => asJson(r, "Could not confirm this report."));
+}
+
+type SectionsResult = { sections: ReportSection[]; verification_status: ImagingStudy["verification_status"] };
+
+/** Confirm (optionally with a correction), reject or undo one section. Saved at once. */
+export function decideSection(
+  apiUrl: string,
+  studyId: string,
+  sectionType: string,
+  decision: "confirmed" | "rejected" | "unverified",
+  text?: string,
+): Promise<SectionsResult> {
+  return fetchWithTimeout(`${apiUrl}/api/imaging/studies/${studyId}/report/sections/${encodeURIComponent(sectionType)}/decision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(text === undefined ? { decision } : { decision, text }),
+  }).then((r) => asJson(r, "Could not save this decision."));
+}
+
+export function fetchReportLines(apiUrl: string, studyId: string): Promise<{ lines: ReportLineItem[]; adjustable: boolean }> {
+  return fetchWithTimeout(`${apiUrl}/api/imaging/studies/${studyId}/report/lines`).then((r) =>
+    asJson(r, "Could not load the report lines."),
+  );
+}
+
+export function adjustBoundaries(
+  apiUrl: string,
+  studyId: string,
+  sections: { section_type: string; line_start: number; line_end: number }[],
+): Promise<SectionsResult> {
+  return fetchWithTimeout(`${apiUrl}/api/imaging/studies/${studyId}/report/sections/boundaries`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sections }),
+  }).then((r) => asJson(r, "Could not change the section boundaries."));
+}
+
+export function applyReportDetails(apiUrl: string, studyId: string, fields: string[]): Promise<ImagingStudy> {
+  return fetchWithTimeout(`${apiUrl}/api/imaging/studies/${studyId}/report/details/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+  }).then((r) => asJson(r, "Could not update the study details."));
 }
 
 export function compareReports(

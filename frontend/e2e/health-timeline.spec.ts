@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 import fs from "node:fs";
-import { generateReportPdf } from "./helpers";
+import { confirmRemainingImagingSections, generateReportPdf } from "./helpers";
 
 const FIXTURES_DIR = path.join(__dirname, ".scratch", "fixtures");
 
@@ -33,10 +33,7 @@ test.describe("Health Timeline", () => {
     await page.locator(".imaging-upload-label input[type=file]").setInputFiles(reportPath);
     await expect(page.getByText(/sections reviewed/)).toBeVisible({ timeout: 20_000 });
 
-    const textareas = page.locator(".imaging-section-block textarea");
-    const count = await textareas.count();
-    for (let i = 0; i < count; i += 1) await textareas.nth(i).click();
-    await page.getByRole("button", { name: "Confirm reviewed sections" }).click();
+    await confirmRemainingImagingSections(page);
     await expect(page.locator(".lab-verified")).toContainText("Verified");
 
     // Open the Health Timeline and confirm the study appears.

@@ -10,17 +10,124 @@ export type LibrarySource = { id: string; title: string; publisher: string; url?
 export type Message = { role: "user" | "assistant"; content: string };
 export type DocFieldStatus = "in_listed_range" | "outside_listed_range" | "flagged_high_on_report" | "flagged_low_on_report" | "not_applicable" | "unknown";
 export type DocFieldConfidence = "clearly_visible" | "needs_review" | "could_not_read";
-export type DocField = { field_id: string; label: string; value: string; unit: string; reference_range: string; status: DocFieldStatus; confidence: DocFieldConfidence; page_number: number; source_text: string; extraction_method?: string; user_edited: boolean };
-export type DocPage = { page_number: number; preview_url: string; text_available: boolean; extracted_field_count: number };
-export type DocState = { document_id: string; filename: string; page_count: number; status: string; pages: DocPage[]; fields: DocField[]; confirmed: boolean };
+export const DOC_STATUS_LABELS: Record<DocFieldStatus, string> = {
+  in_listed_range: "",
+  outside_listed_range: "",
+  flagged_high_on_report: "Flagged high on this report",
+  flagged_low_on_report: "Flagged low on this report",
+  not_applicable: "",
+  unknown: "",
+};
+export const DOC_CONFIDENCE_LABELS: Record<DocFieldConfidence, string> = { clearly_visible: "Clearly visible", needs_review: "Needs review", could_not_read: "Could not read" };
+export type DocField = {
+  field_id: string; label: string; value: string; unit: string; reference_range: string;
+  status: DocFieldStatus; confidence: DocFieldConfidence; page_number: number; source_text: string;
+  extraction_method?: string; user_edited: boolean;
+  /** Extraction v2 provenance: flag as printed, source region (PDF points), original extraction. */
+  flag?: string; source_bbox?: number[] | null; extracted?: { label: string; value: string; unit: string; reference_range: string } | null;
+};
+export type DocPage = {
+  page_number: number; preview_url: string; text_available: boolean; extracted_field_count: number;
+  width?: number; height?: number;
+  /** How the page was read and how readable it was (not a measure of medical accuracy). */
+  text_source?: "text_layer" | "ocr" | "vision" | "none" | ""; quality?: "good" | "fair" | "poor" | "unreadable" | "";
+  quality_notes?: string[]; ocr_confidence?: number | null;
+};
+/** Lowest extraction version whose lab field mapping is trustworthy (v2: position-based
+ * table reading). Unconfirmed documents read before it are offered a re-read. */
+export const CURRENT_EXTRACTION_VERSION = 2;
+export type DocState = {
+  document_id: string; filename: string; page_count: number; status: string; pages: DocPage[]; fields: DocField[]; confirmed: boolean;
+  content_type?: string; extraction_version?: number; content_sha256?: string; duplicate_of?: { document_id: string; filename: string } | null;
+  /** A partially completed review saved on the server (decisions and edits only, not a record). */
+  review_draft?: Record<string, ReviewDraftItem>; review_draft_saved_at?: string;
+};
+export type FieldReviewDecision = "unverified" | "confirmed" | "corrected" | "rejected";
+export type ReviewDraftItem = { state: FieldReviewDecision; label?: string | null; value?: string | null; unit?: string | null; reference_range?: string | null };
+export type DraftSaveStatus = "idle" | "saving" | "saved" | "error";
+export const REVIEWABLE_KEYS = ["label", "value", "unit", "reference_range"] as const;
+export type ReviewablePatch = Partial<Pick<DocField, (typeof REVIEWABLE_KEYS)[number]>>;
+
+/** Lays a saved review draft over the extraction: the reviewer's edits on the
+ * fields, and their decision per field (unverified when there is none). */
+export function applyReviewDraft(state: DocState): { fields: DocField[]; review: Record<string, FieldReviewDecision> } {
+  const draft = state.review_draft || {};
+  const review: Record<string, FieldReviewDecision> = {};
+  const fields = (state.fields || []).map((field) => {
+    const item = draft[field.field_id];
+    review[field.field_id] = item?.state || "unverified";
+    if (!item) return field;
+    const patch: ReviewablePatch = {};
+    for (const key of REVIEWABLE_KEYS) {
+      const value = item[key];
+      if (typeof value === "string" && value !== field[key]) patch[key] = value;
+    }
+    return Object.keys(patch).length ? { ...field, ...patch, user_edited: true } : field;
+  });
+  return { fields, review };
+}
+
+/** The draft to save: every decided or edited field, with only the edited values. */
+export function buildReviewDraft(fields: DocField[], original: DocField[], review: Record<string, FieldReviewDecision>): Record<string, ReviewDraftItem> {
+  const byId = new Map(original.map((field) => [field.field_id, field]));
+  const items: Record<string, ReviewDraftItem> = {};
+  for (const field of fields) {
+    const base = byId.get(field.field_id);
+    if (!base) continue;
+    const item: ReviewDraftItem = { state: review[field.field_id] || "unverified" };
+    let edited = false;
+    for (const key of REVIEWABLE_KEYS) {
+      if (field[key] !== base[key]) { item[key] = field[key]; edited = true; }
+    }
+    if (edited || item.state !== "unverified") items[field.field_id] = item;
+  }
+  return items;
+}
+
+/** Values a reviewer can confirm in one step: read from a real text layer,
+ * clearly visible, with a recorded source region and a value present. */
+export function isBulkConfirmable(field: DocField): boolean {
+  return field.extraction_method === "native_text"
+    && field.confidence === "clearly_visible"
+    && Array.isArray(field.source_bbox) && field.source_bbox.length === 4
+    && field.value.trim() !== "";
+}
 export type DocSession = { document_id: string; filename: string; status: string; page_count: number; field_count: number; confirmed: boolean };
 export type DocUploadResult = { document_id: string; filename: string; content_type?: string; file_size?: number; status: string };
 export type DocEvidenceSource = { citation_number: number; title: string; publisher: string; source_url?: string; passage?: string };
 export type DocExplain = { document_id: string; answer_markdown: string; document_pages_cited: number[]; sources: DocEvidenceSource[]; limitations: string[] };
 export type HealthStatus = { status: string; detail: string };
 export type HealthResponse = { status: string; ready: number; total: number; statuses: Record<string, HealthStatus>; knowledge?: { active_chunks?: number; approved_sources?: number } };
-export type MedField = { key: string; label: string; value: string; confidence: DocFieldConfidence; source_text: string; user_edited: boolean };
-export type MedState = { medication_id: string; source: "upload" | "typed"; filename: string; preview_url: string; status: string; fields: MedField[]; other_visible_text: string; confirmed: boolean };
+export type MedField = {
+  key: string; label: string; value: string; confidence: DocFieldConfidence | "not_found"; source_text: string; user_edited: boolean;
+  /** e.g. from_directions, ambiguous_directions, dose_range, shared_detail, ai_read */
+  flags?: string[];
+  /** What was read before review. */
+  extracted?: string | null;
+  page?: number;
+};
+export type MedMatch = {
+  record_id: string; kind: "possible_duplicate" | "conflict"; medication_name: string; strength: string; directions: string;
+  source: string; confirmed_at: string | null;
+  differences: { field: string; label: string; this_label: string; existing_record: string }[];
+};
+export type MedEntry = {
+  entry_id: string; index: number; fields: MedField[]; review_notes: string[];
+  decision: "unverified" | "confirmed" | "rejected"; record_id: string | null; matches: MedMatch[];
+};
+export type MedState = {
+  medication_id: string; source: "upload" | "typed"; filename: string; preview_url: string; status: string; fields: MedField[];
+  other_visible_text: string; confirmed: boolean;
+  entries?: MedEntry[];
+  /** The label text exactly as read, and how: typed | text_layer | ocr | vision | typed_ai */
+  label_text?: string; text_source?: string;
+};
+export type MedRecord = {
+  medication_id: string; medication_name: string; brand_name: string; generic_name: string; strength: string; dosage_form: string;
+  route: string; dose: string; frequency: string; directions: string; quantity: string; refills: string; prescriber: string;
+  pharmacy: string; prescription_date: string; source: string; filename: string; text_source: string; confirmed_at: string | null;
+  review_flags: string[]; extracted: Record<string, string> | null; matches: MedMatch[];
+};
 export type MedInfo = { medication_id: string; answer_markdown: string; sources: DocEvidenceSource[]; limitations: string[] };
 export type LabTest = { test_code: string; display_name: string; observation_count: number; has_data: boolean };
 export type LabPoint = {
@@ -28,13 +135,32 @@ export type LabPoint = {
   test_code: string;
   test_name: string;
   normalized_name?: string;
+  /** The test name exactly as printed and confirmed. */
+  original_name?: string;
+  /** Plottable number; null for "<0.5", "Positive" and other non-plain values. */
   value: number | null;
   value_text: string;
-  extracted_value?: number | null;
-  confirmed_value?: number | null;
+  value_qualifier?: string;
+  /** What extraction read before review, and what the reviewer kept (as text). */
+  extracted_value?: string | null;
+  confirmed_value?: string | null;
+  review_status?: string;
+  reviewed_at?: string | null;
   unit: string;
+  unit_key?: string;
+  /** The date the result is filed under, and which kind of date it is. */
+  date?: string | null;
+  date_source?: "collection" | "report" | "unknown" | "";
   report_date: string | null;
   collection_date?: string | null;
+  source_text?: string;
+  source_bbox?: number[] | null;
+  /** Whether the chart draws this result, and why not when it doesn't. */
+  plotted?: boolean;
+  not_plotted_reason?: "duplicate" | "qualified_value" | "not_numeric" | "no_date" | "different_unit" | null;
+  duplicate_of?: string | null;
+  duplicate_document_name?: string | null;
+  conflicting_values?: string[];
   document_id: string;
   document_name: string;
   page_number: number;
@@ -151,7 +277,7 @@ export function suggestClinicianQuestions(fields: DocField[], medFields: MedFiel
     }
   }
   if (labPoints.length) questions.push("Are there trends over time I should ask about?");
-  const medName = medFields.find((field) => field.key === "name")?.value;
+  const medName = medFields.find((field) => field.key === "medication_name" || field.key === "name")?.value;
   if (medName) questions.push(`Could ${medName} affect these lab values?`);
   if (!questions.length) {
     return "What do these results mean for me?\nShould any tests be repeated?\nWhat should I watch for before the next visit?";

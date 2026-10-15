@@ -23,6 +23,8 @@ export interface TimelineMeasurement {
 export interface TimelineEntry {
   entry_id: string;
   date: string | null;
+  /** What the date is: "Collected", "Report date", "Study date", "Added to MediGuide". */
+  date_label?: string | null;
   category: TimelineCategory;
   title: string;
   subtitle: string;

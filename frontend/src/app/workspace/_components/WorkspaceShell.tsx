@@ -8,6 +8,8 @@ import { ConfirmDialog, ToastStack } from "../polish-ui";
 import { useWorkspaceContext } from "../_state/WorkspaceStateProvider";
 import { Sidebar } from "./Sidebar";
 import { CommandPalette } from "./CommandPalette";
+import { WorkspaceReveal } from "./WorkspaceReveal";
+import { serviceStateFrom } from "./serviceState";
 import {
   Composer,
   Evidence,
@@ -51,6 +53,9 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     setLanguage,
   } = useWorkspaceContext();
 
+  // The header dot reports what /api/health actually said, never a default "healthy".
+  const serviceState = serviceStateFrom(health);
+
   const showComposer = COMPOSER_ROUTES.has(pathname);
   const showEvidence = EVIDENCE_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 
@@ -81,18 +86,23 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
           <select className="language-select" value={language} onChange={(event) => void translateAnswer(event.target.value)} aria-label="Response language">
             <option>English</option><option>Spanish</option><option>French</option>
           </select>
-          <button className="local-pill" onClick={() => setHealthOpen(true)}><span /> Service status</button>
+          <button className={`local-pill service-${serviceState.tone}`} onClick={() => setHealthOpen(true)} aria-label={`Service status: ${serviceState.label}`} title={serviceState.label}>
+            <span aria-hidden="true" /> Service status
+          </button>
           <button className="icon-button header-search-trigger" title="Search (Ctrl/⌘K)" aria-label="Search your health information" onClick={() => setCommandPaletteOpen(true)}><Search size={18} /></button>
           <button className="icon-button" title="Help" aria-label="Help" onClick={() => setHelpOpen(true)}><HelpCircle size={18} /></button>
           <button className="icon-button" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}><Settings size={18} /></button>
           <button className="profile-button" title="Privacy" aria-label="Privacy" onClick={() => setPrivacyOpen(true)}><UserRound size={17} /></button>
         </div>
+        {/* Phones have no Ctrl+K: search stays one tap away beside the menu. */}
+        <button className="icon-button mobile-search-trigger" title="Search" aria-label="Search your health information" onClick={() => setCommandPaletteOpen(true)}><Search size={18} /></button>
         <button className="mobile-menu icon-button" title="Open navigation" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}><Menu size={20} /></button>
       </header>
       {mobileNavOpen && <button className="mobile-nav-backdrop" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />}
       <div className={`workspace-grid${mobileNavOpen ? " mobile-nav-visible" : ""}${showEvidence ? "" : " no-evidence"}`}>
         <Sidebar onClose={() => setMobileNavOpen(false)} />
         <section className="main-panel">
+          <WorkspaceReveal />
           {children}
           {showComposer && (
             <>

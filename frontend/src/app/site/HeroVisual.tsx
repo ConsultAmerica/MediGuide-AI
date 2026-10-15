@@ -1,27 +1,15 @@
-import Image from "next/image";
 import { ArrowUpRight, BadgeCheck, TrendingUp } from "lucide-react";
 import { TrendChart } from "./TrendChart";
-import heroPhoto from "../../../public/images/site/person-tablet-review.webp";
 
 /**
- * A person reviewing their own results, with the two MediGuide cards that
- * matter most floating over the photo: the trend built from their reports,
- * and the verification that ties a value to its source page. The cards are
- * rendered UI with synthetic data; the photo carries the alt text.
+ * The two MediGuide cards that matter most, floating over the hero
+ * slideshow: the trend built from a person's reports, and the verification
+ * that ties a value to its source page. Rendered UI with synthetic data.
  */
 export function HeroVisual() {
   return (
     <div className="hero-visual">
-      <div className="hero-photo">
-        <Image
-          src={heroPhoto}
-          alt="A woman at home reviewing a printed medical report alongside the same results on her tablet"
-          priority
-          fetchPriority="high"
-          sizes="(max-width: 1080px) 92vw, 46vw"
-          placeholder="blur"
-        />
-      </div>
+      <div className="hero-stage" aria-hidden="true" />
 
       <div className="hv-card hv-trend" aria-hidden="true">
         <div className="hv-card-head">

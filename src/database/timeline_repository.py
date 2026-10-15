@@ -98,6 +98,7 @@ def get_timeline_entries(session: Session, *, owner_id: str | None) -> list[dict
         entries.append({
             "entry_id": f"imaging:{study.id}",
             "date": study.study_date.isoformat() if study.study_date else None,
+            "date_label": "Study date" if study.study_date else None,
             "category": "imaging",
             "title": _imaging_title(study),
             "subtitle": "",
@@ -140,11 +141,18 @@ def get_timeline_entries(session: Session, *, owner_id: str | None) -> list[dict
 
         if observations:
             count = len(observations)
+            # Say which kind of date this is; never present a report date
+            # as the day the sample was collected.
+            sources = {obs.date_source for obs in observations if obs.report_date == document.report_date}
+            lab_date_label = None
+            if date_value:
+                lab_date_label = "Collected" if "collection" in sources else "Report date"
             page_numbers = {obs.page_number for obs in observations}
             shared_page = observations[0].page_number if len(page_numbers) == 1 else None
             entries.append({
                 "entry_id": f"lab:{document.id}",
                 "date": date_value,
+                "date_label": lab_date_label,
                 "category": "laboratory",
                 "title": "Lab Report",
                 "subtitle": _lab_subtitle(observations),
@@ -167,6 +175,7 @@ def get_timeline_entries(session: Session, *, owner_id: str | None) -> list[dict
             entries.append({
                 "entry_id": f"document:{document.id}",
                 "date": date_value,
+                "date_label": "Report date" if date_value else None,
                 "category": "document",
                 "title": document.filename or "Document",
                 "subtitle": "",
@@ -192,6 +201,8 @@ def get_timeline_entries(session: Session, *, owner_id: str | None) -> list[dict
         entries.append({
             "entry_id": f"medication:{record.id}",
             "date": record.confirmed_at.date().isoformat() if record.confirmed_at else None,
+            # The day it was added here, not a prescription or fill date.
+            "date_label": "Added to MediGuide" if record.confirmed_at else None,
             "category": "medication",
             "title": "Medication label added" if record.source == "upload" else "Medication added",
             "subtitle": record.medication_name,

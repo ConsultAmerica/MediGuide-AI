@@ -5,6 +5,7 @@ import Link from "next/link";
 import { FileText, ImageIcon, Pill, ScanLine, ShieldCheck, Stethoscope } from "lucide-react";
 import { useAsyncData } from "../../../lib/useAsyncData";
 import { Button, LoadState, MetricCard } from "../polish-ui";
+import { PageHero } from "../_components/PageHero";
 import { useWorkspaceContext } from "../_state/WorkspaceStateProvider";
 import { API_URL, type DocSession, type LabPoint } from "../_state/workspace-shared";
 import type { TimelineCategory, TimelineEntry } from "../_state/timeline-types";
@@ -54,20 +55,25 @@ export default function HomePage() {
 
   return (
     <div className="workflow-view home-view">
-      <div className="workflow-heading-row">
-        <div>
-          <p className="eyebrow">HOME</p>
-          <h2>{greeting()}.</h2>
-          <p className="workflow-lead">Your health information.</p>
-        </div>
-      </div>
+      <PageHero
+        eyebrow="Home"
+        photo="home"
+        title={`${greeting()}.`}
+        lead="Your health information, verified and connected to the original source."
+        actions={
+          <>
+            <Link className="forest-button" href="/workspace/documents?action=upload"><FileText size={15} /> Upload document</Link>
+            <Link className="quiet-button" href="/workspace/demo">Try synthetic data</Link>
+          </>
+        }
+      />
 
       <div className="metric-card-grid">
         <LoadState state={documentsState} onRetry={documentsState.reload} errorTitle="Could not load documents">
           {(sessions) => <MetricCard label="Recent documents" value={sessions.length} icon={FileText} href="/workspace/documents" />}
         </LoadState>
         <LoadState state={labsState} onRetry={labsState.reload} errorTitle="Could not load labs">
-          {(points) => <MetricCard label="Verified results" value={points.length} icon={ShieldCheck} href="/workspace/labs" />}
+          {(points) => <MetricCard label="Tests with verified results" value={points.length} icon={ShieldCheck} href="/workspace/labs" />}
         </LoadState>
         <LoadState state={imagingState} onRetry={imagingState.reload} errorTitle="Could not load imaging">
           {(studies) => <MetricCard label="Imaging studies" value={studies.length} icon={ScanLine} href="/workspace/imaging" />}

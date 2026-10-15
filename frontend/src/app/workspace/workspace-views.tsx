@@ -1,7 +1,7 @@
 "use client";
 
 import { DragEvent, FormEvent, KeyboardEvent, useEffect, useState } from "react";
-import { Activity, ArrowUp, ArrowUpRight, BookOpen, Check, ChevronRight, Clipboard, FileText, FlaskConical, Image as ImageIcon, Lock, Mic, Paperclip, Pill, PlayCircle, Plus, RefreshCw, ShieldCheck, Sparkles, Stethoscope, Trash2, TrendingUp, Volume2, X, ZoomIn } from "lucide-react";
+import { Activity, ArrowUp, ArrowUpRight, BookOpen, Check, ChevronRight, Clipboard, FileText, FlaskConical, Image as ImageIcon, Lock, Mic, Paperclip, Pill, PlayCircle, Plus, RefreshCw, ShieldCheck, Sparkles, Stethoscope, Trash2, TrendingUp, Volume2, X } from "lucide-react";
 import { EVALUATION_METRICS } from "../../lib/demo-data";
 import {
   Drawer,
@@ -16,6 +16,7 @@ import {
   mapStatusToProcessStage,
   type ProcessStageId,
 } from "./polish-ui";
+import { PageHero } from "./_components/PageHero";
 
 import {
   quickActions,
@@ -27,10 +28,9 @@ import {
   type Source,
   type LibrarySource,
   type Message,
-  type DocFieldStatus,
-  type DocFieldConfidence,
   type DocField,
   type DocState,
+  type DocPage,
   type DocSession,
   type DocExplain,
   type HealthResponse,
@@ -42,24 +42,30 @@ import {
   type SystemStatus,
   type View,
   type AnswerStatus,
+  CURRENT_EXTRACTION_VERSION,
+  type DraftSaveStatus,
+  type FieldReviewDecision,
+  type ReviewablePatch,
 } from "./_state/workspace-shared";
-import { AuthImage } from "./_components/AuthImage";
-import { LabTrendChart } from "./_components/LabTrendChart";
+import { DocumentReview } from "./documents/DocumentReview";
+import { MedicationReview } from "./medications/MedicationReview";
+import { MedicationRecords } from "./medications/MedicationRecords";
+import { LabTrendChart, isPlottable } from "./_components/LabTrendChart";
 export function Conversation({ answer, status, streaming, sources, messages, loading, error, selectedSource, setSelectedSource, onRetry, onPreset, onOpenView, onOpenDocumentPage, onUpload, onAction }: { answer: string; status: AnswerStatus; streaming: boolean; sources: Source[]; question: string; messages: Message[]; loading: string; error: string; selectedSource: number | null; setSelectedSource: (value: number | null) => void; onRetry: () => void; onPreset: (prompt: string) => void; onOpenView: (view: View) => void; onOpenDocumentPage: (page: number) => void; onUpload: () => void; onAction: (action: "copy" | "listen" | "simple" | "questions") => void }) {
   const lastQuestion = [...messages].reverse().find((item) => item.role === "user");
   const empty = !answer && !loading && !lastQuestion;
   return <div className="conversation-view">
-    <div className="conversation-header">
-      <div>
-        <p className="eyebrow">EDUCATIONAL SUPPORT</p>
-        <h2>{answer ? "Your health question, clarified." : "What can I help you understand today?"}</h2>
-        {!answer && <p>Ask a health question, review a document, use your voice, or prepare for an appointment — in one workspace.</p>}
-      </div>
-      <div className="conversation-meta">
+    <PageHero
+      eyebrow="Educational support"
+     
+      title={answer ? "Your health question," : "What can I help you"}
+      accent={answer ? "clarified." : "understand today?"}
+      lead={answer ? undefined : "Ask a health question, review a document, use your voice, or prepare for an appointment — in one workspace."}
+      meta={<>
         <span className="response-count">{messages.filter((message) => message.role === "user").length} session {messages.filter((message) => message.role === "user").length === 1 ? "question" : "questions"}</span>
         <span className="care-mode"><ShieldCheck size={13} /> Educational support</span>
-      </div>
-    </div>
+      </>}
+    />
     {empty && <div className="capability-rail" aria-label="Workspace capabilities">
       <button type="button" onClick={() => { onPreset("What is diabetes in plain language?"); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); }}>
         <span className="quick-icon"><BookOpen size={18} /></span>
@@ -94,11 +100,11 @@ export function Conversation({ answer, status, streaming, sources, messages, loa
     {lastQuestion && <div className="user-question"><span>You asked</span><p>{lastQuestion.content}</p></div>}
     {error && <ServiceError title="Could not reach MediGuide" message={error} onRetry={onRetry} onSystem={() => onOpenView("system")} />}
     {loading && <div className="processing"><Sparkles size={17} /><span>{loading}</span><i /><i /><i /></div>}
-    {answer && <Answer answer={answer} status={status} streaming={streaming} sources={sources} selectedSource={selectedSource} setSelectedSource={setSelectedSource} onAction={onAction} onPreset={onPreset} onOpenView={onOpenView} onOpenDocumentPage={onOpenDocumentPage} />}
+    {answer && <Answer answer={answer} status={status} streaming={streaming} sources={sources} selectedSource={selectedSource} setSelectedSource={setSelectedSource} onAction={onAction} onPreset={onPreset} onOpenView={onOpenView} onOpenDocumentPage={onOpenDocumentPage} onRetry={onRetry} />}
   </div>;
 }
 
-function Answer({ answer, status, streaming, sources, selectedSource, setSelectedSource, onAction, onPreset, onOpenView, onOpenDocumentPage }: { answer: string; status: AnswerStatus; streaming: boolean; sources: Source[]; selectedSource: number | null; setSelectedSource: (value: number | null) => void; onAction: (action: "copy" | "listen" | "simple" | "questions") => void; onPreset: (prompt: string) => void; onOpenView: (view: View) => void; onOpenDocumentPage: (page: number) => void }) {
+function Answer({ answer, status, streaming, sources, selectedSource, setSelectedSource, onAction, onPreset, onOpenView, onOpenDocumentPage, onRetry }: { onRetry: () => void; answer: string; status: AnswerStatus; streaming: boolean; sources: Source[]; selectedSource: number | null; setSelectedSource: (value: number | null) => void; onAction: (action: "copy" | "listen" | "simple" | "questions") => void; onPreset: (prompt: string) => void; onOpenView: (view: View) => void; onOpenDocumentPage: (page: number) => void }) {
   const body = answer.split("\n\n---\n")[0];
 
   if (status === "emergency") {
@@ -134,7 +140,11 @@ function Answer({ answer, status, streaming, sources, selectedSource, setSelecte
   if (status === "withheld" || status === "error") {
     return <article className="answer-document withheld-evidence">
       <div className="answer-kicker"><span><ShieldCheck size={14} /> MEDIGUIDE</span><small>{status === "withheld" ? "Answer withheld" : "Service error"}</small></div>
-      <div className="limited-evidence-body"><h3>{status === "withheld" ? "This answer could not be safely shown." : "Something went wrong."}</h3><p>{body}</p></div>
+      <div className="limited-evidence-body">
+        <h3>{status === "withheld" ? "This answer could not be safely shown." : "MediGuide couldn’t finish this answer."}</h3>
+        <p>{body}</p>
+        {status === "error" && <button type="button" className="quiet-button answer-retry" onClick={onRetry}><RefreshCw size={14} /> Try again</button>}
+      </div>
     </article>;
   }
 
@@ -167,7 +177,7 @@ export function Composer({ question, setQuestion, onSubmit, onKeyDown, onUpload,
       </select>
       <span className="composer-privacy"><ShieldCheck size={13} /> Private session</span>
     </div>
-    <textarea value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={onKeyDown} placeholder="Ask a health question, review a document, or prepare for a visit…" rows={3} />
+    <textarea aria-label="Ask MediGuide a health question" value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={onKeyDown} placeholder="Ask a health question, review a document, or prepare for a visit…" rows={3} />
     <div className="composer-footer">
       <div>
         <span>Enter to send · Shift + Enter for a new line</span>
@@ -180,9 +190,9 @@ export function Composer({ question, setQuestion, onSubmit, onKeyDown, onUpload,
 export function Evidence({ sources, selected, onSelect, context = "idle", onOpenSources }: { sources: Source[]; selected: number | null; onSelect: (value: number | null) => void; context?: "idle" | "document-review" | "explaining" | "chat"; onOpenSources?: () => void }) {
   const showKnowledgeNote = context === "explaining" || context === "chat";
   const isExplanation = context === "explaining" || context === "chat";
-  const emptyTitle = context === "document-review" ? "Document review in progress" : "Citations appear beside answers";
+  const emptyTitle = context === "document-review" ? "Sources appear with explanations" : "Citations appear beside answers";
   const emptyBody = context === "document-review"
-    ? "Review extracted values first. Approved sources appear after you confirm and request an explanation."
+    ? "Once your values are confirmed, ask MediGuide to explain them; the approved sources it uses appear here."
     : "Trusted evidence used in your answer will appear here.";
   const selectedSource = sources.find((source) => source.number === selected);
 
@@ -217,24 +227,33 @@ export function Evidence({ sources, selected, onSelect, context = "idle", onOpen
   </aside>;
 }
 
-const DOC_STATUS_LABELS: Record<DocFieldStatus, string> = {
-  in_listed_range: "",
-  outside_listed_range: "",
-  flagged_high_on_report: "Flagged high on this report",
-  flagged_low_on_report: "Flagged low on this report",
-  not_applicable: "",
-  unknown: "",
-};
-const DOC_CONFIDENCE_LABELS: Record<DocFieldConfidence, string> = { clearly_visible: "Clearly visible", needs_review: "Needs review", could_not_read: "Could not read" };
+
+/** One consistent processing-state vocabulary for documents. */
+function documentStatusChip(status: string, confirmed: boolean): { label: string; tone: "neutral" | "success" | "warning" | "error" } {
+  if (confirmed || status === "confirmed") return { label: "Completed", tone: "success" };
+  if (status === "failed") return { label: "Failed", tone: "error" };
+  if (status === "review_required") return { label: "Needs review", tone: "warning" };
+  if (status === "extracting" || status === "processing" || status === "rendering") return { label: "Processing", tone: "neutral" };
+  if (status === "queued") return { label: "Queued", tone: "neutral" };
+  return { label: "Uploaded", tone: "neutral" };
+}
+
+function pageReadLabel(page: DocPage): string {
+  const quality = page.quality ? `${page.quality} reading quality` : "";
+  if (page.text_source === "text_layer") return "Read from the PDF's text — exact characters";
+  if (page.text_source === "ocr") return `Read by OCR (scanned or photographed page) · ${quality}`;
+  if (page.text_source === "vision") return "Read by the AI vision model — check every value against the page";
+  return "No readable text found on this page";
+}
 
 export function Documents({
   apiUrl, docState, docFields, docConfirmed, docReviewChecked, setDocReviewChecked,
   docSelectedPage, setDocSelectedPage, highlightedFieldId, setHighlightedFieldId,
   docExplain, docQuestion, setDocQuestion,
   selectedSource, setSelectedSource,
-  dragging, recentSessions, onOpenSession, onUpload, onLoadSample, demoGuide, onOpenLabsFromDemo, onDrop, onDragEnter, onDragLeave, onFieldChange, onConfirm, onExplain, onSuggestQuestions, onPrepareVisit, onAskAbout, onExportFields, onOpenLabs, onReset,
+  dragging, recentSessions, onOpenSession, onUpload, onLoadSample, demoGuide, onOpenLabsFromDemo, onDrop, onDragEnter, onDragLeave, onFieldChange, onConfirm, onExplain, onSuggestQuestions, onPrepareVisit, onAskAbout, onExportFields, onOpenLabs, onReset, onReread,
   loading, error, errorKind, labsHint, confirmedLabCodes, onRetry, onSystem, onRemove, onOpenImaging,
-  processStage, processFailed, processRetry, fieldReviewState, setFieldReviewState, previewZoom, setPreviewZoom, sourceBreadcrumb, onClearBreadcrumb, onBackToTimeline,
+  processStage, processFailed, processRetry, fieldReviewState, draftStatus, onDecide, onUndo, previewZoom, setPreviewZoom, sourceBreadcrumb, onClearBreadcrumb, onBackToSource,
 }: {
   apiUrl: string;
   docState: DocState | null;
@@ -261,7 +280,7 @@ export function Documents({
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
   onDragEnter: () => void;
   onDragLeave: () => void;
-  onFieldChange: (fieldId: string, patch: Partial<Pick<DocField, "value" | "unit" | "reference_range">>) => void;
+  onFieldChange: (fieldId: string, patch: ReviewablePatch) => void;
   onConfirm: () => void;
   onExplain: () => void;
   onSuggestQuestions: () => void;
@@ -270,6 +289,7 @@ export function Documents({
   onExportFields: () => void;
   onOpenLabs: () => void;
   onReset: () => void;
+  onReread: () => void;
   loading: string;
   error: string;
   errorKind: "upload" | "extract" | "confirm" | "explain" | "sample" | "";
@@ -282,13 +302,15 @@ export function Documents({
   processStage: ProcessStageId | null;
   processFailed: boolean;
   processRetry: { attempt: number; max: number } | null;
-  fieldReviewState: Record<string, "unverified" | "confirmed" | "corrected" | "rejected">;
-  setFieldReviewState: (value: Record<string, "unverified" | "confirmed" | "corrected" | "rejected"> | ((prev: Record<string, "unverified" | "confirmed" | "corrected" | "rejected">) => Record<string, "unverified" | "confirmed" | "corrected" | "rejected">)) => void;
+  fieldReviewState: Record<string, FieldReviewDecision>;
+  draftStatus: DraftSaveStatus;
+  onDecide: (fieldIds: string[], decision: "confirmed" | "rejected") => void;
+  onUndo: (fieldId: string) => void;
   previewZoom: number;
   setPreviewZoom: (value: number) => void;
   sourceBreadcrumb: string;
   onClearBreadcrumb: () => void;
-  onBackToTimeline: () => void;
+  onBackToSource: () => void;
 }) {
   const uploadErrorTitle = errorKind === "extract"
     ? "We couldn't finish reading this document"
@@ -304,21 +326,18 @@ export function Documents({
     : error || (errorKind === "extract"
       ? "Your original file is still available."
       : "MediGuide could not upload this file. The document has not been stored.");
-  const reviewedCount = docFields.filter((field) => fieldReviewState[field.field_id] && fieldReviewState[field.field_id] !== "unverified").length;
 
   if (!docState) {
     return <div className="workflow-view">
-      <div className="workflow-heading-row">
-        <div>
-          <p className="eyebrow">DOCUMENTS</p>
-          <h2>Documents</h2>
-          <p className="workflow-lead">Upload, review, and trace information from your health documents.</p>
-        </div>
-        <div className="heading-actions">
+      <PageHero
+        eyebrow="Documents"
+        title="Documents"
+        lead="Upload, review, and trace information from your health documents."
+        actions={<>
           <button className="forest-button" type="button" onClick={onUpload}><Plus size={15} /> Upload document</button>
           <button className="quiet-button" type="button" onClick={onLoadSample}>Try synthetic report</button>
-        </div>
-      </div>
+        </>}
+      />
       {!loading && !error && recentSessions.length === 0 && (
         <EmptyState
           title="No documents yet"
@@ -366,8 +385,8 @@ export function Documents({
                 </td>
                 <td>{session.page_count || "—"}</td>
                 <td>{session.field_count}</td>
-                <td>{session.confirmed ? "Verified" : "Needs review"}</td>
-                <td><StatusChip label={session.confirmed ? "Ready" : session.status.replaceAll("_", " ")} tone={session.confirmed ? "success" : "neutral"} /></td>
+                <td>{session.confirmed ? "Verified" : "Not yet verified"}</td>
+                <td><StatusChip {...documentStatusChip(session.status, session.confirmed)} /></td>
                 <td><button type="button" className="quiet-button" onClick={() => onOpenSession(session.document_id)}>Open</button></td>
               </tr>
             ))}
@@ -377,18 +396,17 @@ export function Documents({
     </div>;
   }
 
-  const visibleFields = docFields.filter((field) => field.page_number === docSelectedPage);
   const activePreview = docState.pages.find((page) => page.page_number === docSelectedPage) || docState.pages[0];
+  // Pages that were hard to read, for one plain-language warning above review.
+  const hardPages = docState.pages.filter((page) => page.quality === "poor" || page.quality === "unreadable" || page.text_source === "vision" || (page.quality_notes || []).some((note) => /Low resolution|Blurry|Low contrast/.test(note)));
 
   if ((loading || processStage) && !docFields.length) {
     return <div className="workflow-view doc-intel-view">
-      <div className="workflow-heading-row">
-        <div>
-          <p className="eyebrow">DOCUMENTS</p>
-          <h2>{docState.filename}</h2>
-          <p className="workflow-lead">Processing your document while keeping the original file available.</p>
-        </div>
-      </div>
+      <PageHero
+        eyebrow="Documents"
+        title={docState.filename}
+        lead="Processing your document while keeping the original file available."
+      />
       <ProcessingChecklist activeStage={processStage || mapStatusToProcessStage(docState.status, loading)} failed={processFailed} waitingMessage={processRetry ? "Document processing is starting up." : undefined} attempt={processRetry?.attempt} maxAttempts={processRetry?.max} />
       {error && <ServiceError title={uploadErrorTitle} message={uploadErrorMessage} onRetry={onRetry} onSystem={onSystem} />}
       {error && (
@@ -414,22 +432,53 @@ export function Documents({
   }
 
   return <div className="workflow-view doc-intel-view">
-    <div className="workflow-heading-row">
-      <div>
-        <p className="eyebrow">DOCUMENT REVIEW</p>
-        <h2>{docState.filename}</h2>
-        <p className="workflow-lead">{docState.page_count} page{docState.page_count === 1 ? "" : "s"} · {docConfirmed ? "Confirmed by you" : "Information found in your report — review before confirming"}</p>
-      </div>
-      <div className="heading-actions">
+    <PageHero
+      eyebrow="Document review"
+      title={docState.filename}
+      lead={`${docState.page_count} page${docState.page_count === 1 ? "" : "s"} · ${docConfirmed ? "These values are saved to your records and timeline." : "Check each value against the original page, then confirm."}`}
+      meta={docConfirmed ? <span><ShieldCheck size={14} /> Confirmed by you</span> : <span><ShieldCheck size={14} /> Review required</span>}
+      actions={<>
         {docFields.length > 0 && <button className="quiet-button" onClick={onExportFields}><Clipboard size={14} /> Export fields</button>}
         <button className="quiet-button" onClick={onReset}><Trash2 size={14} /> Delete document</button>
+      </>}
+    />
+
+    {!docConfirmed && (docState.extraction_version ?? 1) < CURRENT_EXTRACTION_VERSION && (!docState.content_type || docState.content_type.includes("pdf")) && (
+      <div className="reread-banner" role="status">
+        <div>
+          <strong>Read with an older extraction method</strong>
+          <p>Some names, values or units on this document may be mapped incorrectly. Nothing from it is in your records yet. Re-read it with the current method, then review again.</p>
+        </div>
+        <button type="button" className="forest-button" disabled={Boolean(loading)} onClick={onReread}><RefreshCw size={15} /> Re-read document</button>
       </div>
-    </div>
+    )}
+
+    {!docConfirmed && docState.duplicate_of && (
+      <div className="duplicate-banner" role="status">
+        <div>
+          <strong>You already confirmed this file</strong>
+          <p>It is identical to <em>{docState.duplicate_of.filename}</em>. Confirming it again would add the same results to your records twice.</p>
+        </div>
+        <button type="button" className="quiet-button" onClick={() => onOpenSession(docState.duplicate_of!.document_id)}>Open confirmed copy</button>
+      </div>
+    )}
+
+    {!docConfirmed && hardPages.length > 0 && (
+      <div className="scan-quality-banner" role="status">
+        <strong>{hardPages.length === 1 ? `Page ${hardPages[0].page_number} was hard to read` : `${hardPages.length} pages were hard to read`}</strong>
+        <ul>
+          {hardPages.map((page) => (
+            <li key={page.page_number}>Page {page.page_number}: {(page.quality_notes || []).join(" · ") || "Low reading quality"}</li>
+          ))}
+        </ul>
+        <p>Check each value carefully against the page. If anything is unclear, upload a sharper, well-lit scan or photo.</p>
+      </div>
+    )}
 
     {sourceBreadcrumb && (
       <div className="source-breadcrumb" aria-label="Source navigation">
         <span>{sourceBreadcrumb}</span>
-        <button type="button" className="quiet-button" onClick={() => { onClearBreadcrumb(); onBackToTimeline(); }}>← Back to Hemoglobin A1C</button>
+        <button type="button" className="quiet-button" onClick={() => { onClearBreadcrumb(); onBackToSource(); }}>← Back</button>
       </div>
     )}
 
@@ -443,70 +492,41 @@ export function Documents({
       </div>
     )}
     {(loading || processStage) && <ProcessingChecklist activeStage={processStage || mapStatusToProcessStage(docState.status, loading)} failed={processFailed} waitingMessage={processRetry ? "Document processing is starting up." : undefined} attempt={processRetry?.attempt} maxAttempts={processRetry?.max} />}
-    {demoGuide && <p className="demo-guide-banner">{demoGuide}{docConfirmed ? <>{" "}<button type="button" className="quiet-button" onClick={onOpenLabsFromDemo}>Open Labs</button></> : null}</p>}
+    {demoGuide && <p className="demo-guide-banner">{docConfirmed ? "Step 1 of 4 complete — your values are confirmed. Next: see them in Labs." : demoGuide}{docConfirmed ? <>{" "}<button type="button" className="quiet-button" onClick={onOpenLabsFromDemo}>Open Labs</button></> : null}</p>}
     {labsHint && <div className="labs-persist-hint-row">
       <p className="labs-persist-hint"><FlaskConical size={14} /> {labsHint}</p>
       {confirmedLabCodes.length > 0 && <button type="button" className="quiet-button" onClick={onOpenLabs}><TrendingUp size={14} /> View in Labs</button>}
     </div>}
 
-    {docState.page_count >= 1 && <div className="page-nav-bar" aria-label="Page navigation">
-      <button type="button" className="quiet-button" disabled={docSelectedPage <= 1} onClick={() => setDocSelectedPage(Math.max(1, docSelectedPage - 1))}>Previous</button>
-      <span>Page {docSelectedPage} of {docState.page_count}</span>
-      <button type="button" className="quiet-button" disabled={docSelectedPage >= docState.page_count} onClick={() => setDocSelectedPage(Math.min(docState.page_count, docSelectedPage + 1))}>Next</button>
-      <button type="button" className="quiet-button" onClick={() => setPreviewZoom(1)}><ZoomIn size={14} /> Fit width</button>
-      <button type="button" className="quiet-button" onClick={() => setPreviewZoom(Math.min(1.6, previewZoom + 0.15))}>Zoom in</button>
-      <button type="button" className="quiet-button" onClick={() => setPreviewZoom(Math.max(0.8, previewZoom - 0.15))}>Zoom out</button>
-    </div>}
+    {activePreview?.text_source && (
+      <p className={`page-read-info quality-${activePreview.quality || "none"}`}>
+        {pageReadLabel(activePreview)}
+      </p>
+    )}
 
-    <div className="extraction-grid doc-review-grid">
-      <div className="document-preview doc-page-preview">
-        <p className="panel-kicker">ORIGINAL REPORT · PAGE {docSelectedPage}</p>
-        {activePreview?.preview_url ? <AuthImage src={`${apiUrl}${activePreview.preview_url}`} alt={`Page ${docSelectedPage} preview`} style={{ transform: `scale(${previewZoom})`, transformOrigin: "top center" }} /> : <div className="doc-preview-placeholder"><FileText size={38} /><span>Page {docSelectedPage} preview</span></div>}
-        <small>Check names, values, units, dates, and reference ranges against the source page</small>
-      </div>
-
-      <div className="extracted-fields doc-fields">
-        <p className="eyebrow">{docConfirmed ? "CONFIRMED" : "VERIFICATION"} · PAGE {docSelectedPage}</p>
-        <h3 className="doc-fields-heading">Extracted lab information</h3>
-        <p className="doc-fields-support">Information found in your report — confirm before it enters the timeline</p>
-        {!docConfirmed && docFields.length > 0 && <p className="review-progress">{reviewedCount} of {docFields.length} reviewed</p>}
-        {visibleFields.length === 0 && <p className="doc-fields-empty">No information was found on this page.</p>}
-        {visibleFields.map((field) => (
-          <div
-            key={field.field_id}
-            className={`doc-field-row status-${field.status}${highlightedFieldId === field.field_id ? " field-highlighted" : ""}`}
-            onFocus={() => setHighlightedFieldId(field.field_id)}
-          >
-            <div className="doc-field-label">
-              <strong>{field.label}</strong>
-              <span className={`confidence-pill confidence-${field.confidence}`}>{DOC_CONFIDENCE_LABELS[field.confidence]}</span>
-              <span className="status-chip">{fieldReviewState[field.field_id] === "corrected" ? "Corrected" : fieldReviewState[field.field_id] === "rejected" ? "Rejected" : fieldReviewState[field.field_id] === "confirmed" || docConfirmed ? "Confirmed" : "Unverified"}</span>
-              {(field.status === "flagged_high_on_report" || field.status === "flagged_low_on_report") && DOC_STATUS_LABELS[field.status] ? (
-                <span className={`status-pill status-pill-${field.status}`}>{DOC_STATUS_LABELS[field.status]}</span>
-              ) : null}
-            </div>
-            <div className="doc-field-inputs">
-              <label>Value<input value={field.value} readOnly={docConfirmed} onChange={(event) => onFieldChange(field.field_id, { value: event.target.value })} /></label>
-              <label>Unit<input value={field.unit} readOnly={docConfirmed} onChange={(event) => onFieldChange(field.field_id, { unit: event.target.value })} /></label>
-              <label>Reference range<input value={field.reference_range} readOnly={docConfirmed} onChange={(event) => onFieldChange(field.field_id, { reference_range: event.target.value })} /></label>
-            </div>
-            {!docConfirmed && (
-              <div className="field-review-actions">
-                <button type="button" className="quiet-button" onClick={() => setFieldReviewState((current) => ({ ...current, [field.field_id]: "confirmed" }))}>Confirm</button>
-                <button type="button" className="quiet-button" onClick={() => setHighlightedFieldId(field.field_id)}>Edit</button>
-                <button type="button" className="quiet-button" onClick={() => setFieldReviewState((current) => ({ ...current, [field.field_id]: "rejected" }))}>Reject</button>
-              </div>
-            )}
-          </div>
-        ))}
-
-        {!docConfirmed && <div className="confirm-gate">
-          <label className="confirm"><input type="checkbox" checked={docReviewChecked} onChange={(event) => setDocReviewChecked(event.target.checked)} /> I reviewed the names, values, units, dates, and reference ranges above.</label>
-          <button className="forest-button" disabled={!docReviewChecked || Boolean(loading)} onClick={onConfirm}>Confirm reviewed items <Check size={16} /></button>
-        </div>}
-
+    <DocumentReview
+      apiUrl={apiUrl}
+      docState={docState}
+      docFields={docFields}
+      docConfirmed={docConfirmed}
+      docSelectedPage={docSelectedPage}
+      setDocSelectedPage={setDocSelectedPage}
+      highlightedFieldId={highlightedFieldId}
+      setHighlightedFieldId={setHighlightedFieldId}
+      fieldReviewState={fieldReviewState}
+      draftStatus={draftStatus}
+      previewZoom={previewZoom}
+      setPreviewZoom={setPreviewZoom}
+      docReviewChecked={docReviewChecked}
+      setDocReviewChecked={setDocReviewChecked}
+      loading={loading}
+      onSaveCorrection={onFieldChange}
+      onDecide={onDecide}
+      onUndo={onUndo}
+      onConfirm={onConfirm}
+      afterFields={<>
         {docConfirmed && !docExplain && <div className="explain-gate">
-          <label>Ask a question about this document (optional)<textarea rows={2} value={docQuestion} onChange={(event) => setDocQuestion(event.target.value)} placeholder="Explain the confirmed information in plain language and suggest questions for a qualified healthcare professional." /></label>
+          <label className="explain-question">Ask a question about this document (optional)<textarea rows={3} value={docQuestion} onChange={(event) => setDocQuestion(event.target.value)} placeholder="Explain the confirmed information in plain language and suggest questions for a qualified healthcare professional." /></label>
           <div className="explain-actions">
             <button className="quiet-button" type="button" onClick={onOpenLabs}><FlaskConical size={15} /> Open Labs</button>
             <button className="quiet-button" type="button" onClick={onPrepareVisit}><Stethoscope size={15} /> Prepare visit questions</button>
@@ -520,8 +540,8 @@ export function Documents({
           <button className="quiet-button" type="button" onClick={onPrepareVisit}><Stethoscope size={15} /> Prepare visit questions</button>
           <button className="quiet-button" type="button" onClick={onAskAbout}><Sparkles size={15} /> Ask about these values</button>
         </div>}
-      </div>
-    </div>
+      </>}
+    />
 
     {loading && !processStage && <div className="processing"><Sparkles size={17} /><span>{loading}</span><i /><i /><i /></div>}
 
@@ -574,18 +594,16 @@ function DocExplainCard({ explain, selectedSource, setSelectedSource, onJumpToPa
 }
 
 export function Medication({
-  apiUrl, medState, medFields, medConfirmed, medReviewChecked, setMedReviewChecked,
+  apiUrl, medState, medConfirmed, onStateChange,
   medInfo, medQuestion, setMedQuestion, medTypedText, setMedTypedText,
   selectedSource, setSelectedSource,
-  dragging, onUpload, onDrop, onDragEnter, onDragLeave, onFieldChange, onConfirm, onGetInfo, onSubmitTyped, onSample, onPrepareVisit, onReset,
+  dragging, onUpload, onDrop, onDragEnter, onDragLeave, onGetInfo, onSubmitTyped, onSample, onPrepareVisit, onReset,
   loading, error,
 }: {
   apiUrl: string;
   medState: MedState | null;
-  medFields: MedField[];
   medConfirmed: boolean;
-  medReviewChecked: boolean;
-  setMedReviewChecked: (value: boolean) => void;
+  onStateChange: (state: MedState) => void;
   medInfo: MedInfo | null;
   medQuestion: string;
   setMedQuestion: (value: string) => void;
@@ -598,8 +616,6 @@ export function Medication({
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
   onDragEnter: () => void;
   onDragLeave: () => void;
-  onFieldChange: (key: string, value: string) => void;
-  onConfirm: () => void;
   onGetInfo: () => void;
   onSubmitTyped: () => void;
   onSample: () => void;
@@ -610,10 +626,13 @@ export function Medication({
 }) {
   if (!medState) {
     return <div className="workflow-view">
-      <div className="workflow-heading-row">
-        <div><p className="eyebrow">MEDICATION WORKSPACE</p><h2>Understand a medication label.</h2><p className="workflow-lead">Upload a photo of a label, or type what is printed on it — review the extracted name, strength, and instructions before MediGuide adds educational information.</p></div>
-        <span className="workflow-badge"><ShieldCheck size={14} /> Human review first</span>
-      </div>
+      <PageHero
+        eyebrow="Medication workspace"
+        title="Understand a"
+        accent="medication label."
+        lead="Upload a photo of a label, or type what is printed on it — review the extracted name, strength, and instructions before MediGuide adds educational information."
+        meta={<span><ShieldCheck size={14} /> Human review first</span>}
+      />
       {!loading && <div className={dragging ? "upload-zone is-dragging" : "upload-zone"} onDrop={onDrop} onDragEnter={(event) => { event.preventDefault(); onDragEnter(); }} onDragOver={(event) => event.preventDefault()} onDragLeave={onDragLeave}>
         <span className="upload-art"><Pill size={25} /><span><ImageIcon size={14} /></span></span>
         <strong>Upload a medication label</strong>
@@ -631,55 +650,41 @@ export function Medication({
       </div>}
       {loading && <div className="processing large"><Sparkles size={18} /> {loading}<i /><i /><i /></div>}
       {error && <div className="service-error"><Activity size={19} /><div><strong>{error}</strong><p>Nothing has been added.</p></div></div>}
+      <MedicationRecords apiUrl={apiUrl} refreshKey="landing" />
     </div>;
   }
 
   return <div className="workflow-view doc-intel-view">
-    <div className="workflow-heading-row">
-      <div><p className="eyebrow">MEDICATION WORKSPACE</p><h2>{medState.filename || "Typed label"}</h2><p className="workflow-lead">{medConfirmed ? "Confirmed by you" : "Review each detail before confirming"}</p></div>
-      <button className="quiet-button" onClick={onReset}><RefreshCw size={14} /> Start over</button>
-    </div>
+    <PageHero
+      eyebrow="Medication workspace"
+      title={medState.filename || (medState.source === "typed" ? "Your medication label" : "Medication label")}
+      lead={medConfirmed ? "Confirmed by you" : "Review each detail before confirming"}
+      actions={<button className="quiet-button" onClick={onReset}><RefreshCw size={14} /> Start over</button>}
+    />
 
     {error && <div className="service-error"><Activity size={19} /><div><strong>{error}</strong><p>Try again below.</p></div></div>}
 
-    <div className="extraction-grid doc-review-grid">
-      <div className="document-preview doc-page-preview">
-        {medState.source === "upload" ? <AuthImage src={`${apiUrl}${medState.preview_url}`} alt="Label preview" /> : <Pill size={38} />}
-        <small>Check the medication name, strength, and directions</small>
-      </div>
+    <MedicationReview apiUrl={apiUrl} medState={medState} onStateChange={onStateChange} />
 
-      <div className="extracted-fields doc-fields">
-        <p className="eyebrow">EXTRACTED DETAILS</p>
-        {medFields.map((field) => (
-          <div key={field.key} className="doc-field-row">
-            <div className="doc-field-label">
-              <strong>{field.label}</strong>
-              <span className={`confidence-pill confidence-${field.confidence}`}>{DOC_CONFIDENCE_LABELS[field.confidence]}</span>
-            </div>
-            <div className="doc-field-inputs">
-              <label>Value<input value={field.value} readOnly={medConfirmed} onChange={(event) => onFieldChange(field.key, event.target.value)} /></label>
-            </div>
-          </div>
-        ))}
-        {medState.other_visible_text && <p className="doc-fields-empty">Other visible text: {medState.other_visible_text}</p>}
-
-        {!medConfirmed && <div className="confirm-gate">
-          <label className="confirm"><input type="checkbox" checked={medReviewChecked} onChange={(event) => setMedReviewChecked(event.target.checked)} /> I reviewed the medication name, strength, and instructions above.</label>
-          <button className="forest-button" disabled={!medReviewChecked || Boolean(loading)} onClick={onConfirm}>Confirm reviewed details <Check size={16} /></button>
-        </div>}
-
-        {medConfirmed && !medInfo && <div className="explain-gate">
-          <label>Ask a question about this medication (optional)<textarea rows={2} value={medQuestion} onChange={(event) => setMedQuestion(event.target.value)} placeholder="What should I know about this medication?" /></label>
-          <div className="explain-actions">
-            <button className="quiet-button" type="button" onClick={onPrepareVisit}><Stethoscope size={15} /> Add to visit prep</button>
-            <button className="forest-button" disabled={Boolean(loading)} onClick={onGetInfo}>Get educational information <ArrowUpRight size={16} /></button>
-          </div>
-        </div>}
-        {medConfirmed && medInfo && <div className="explain-actions">
+    {medConfirmed && <section className="med-education" aria-labelledby="med-education-title">
+      <p className="eyebrow" id="med-education-title">GENERAL INFORMATION · SEPARATE FROM YOUR LABEL</p>
+      <p className="med-education-note">
+        Educational information about this kind of medicine, from approved sources. It never changes the directions on your label,
+        and it is not advice to start, stop or change a dose.
+      </p>
+      {!medInfo && <div className="explain-gate">
+        <label className="explain-question">Ask a question about this medication (optional)<textarea rows={2} value={medQuestion} onChange={(event) => setMedQuestion(event.target.value)} placeholder="What should I know about this medication?" /></label>
+        <div className="explain-actions">
           <button className="quiet-button" type="button" onClick={onPrepareVisit}><Stethoscope size={15} /> Add to visit prep</button>
-        </div>}
-      </div>
-    </div>
+          <button className="forest-button" disabled={Boolean(loading)} onClick={onGetInfo}>Get educational information <ArrowUpRight size={16} /></button>
+        </div>
+      </div>}
+      {medInfo && <div className="explain-actions">
+        <button className="quiet-button" type="button" onClick={onPrepareVisit}><Stethoscope size={15} /> Add to visit prep</button>
+      </div>}
+    </section>}
+
+    <MedicationRecords apiUrl={apiUrl} refreshKey={(medState.entries || []).map((entry) => entry.decision).join(",")} />
 
     {loading && <div className="processing"><Sparkles size={17} /><span>{loading}</span><i /><i /><i /></div>}
 
@@ -720,7 +725,7 @@ function buildVisitSummaryText(fields: Record<string, string>, includeLabs: bool
   if (includeLabs && labPoints.length) {
     lines.push("Verified labs summary (patient-confirmed):");
     for (const point of labPoints.slice(0, 8)) {
-      lines.push(`- ${point.test_name}: ${point.value_text} ${point.unit}${point.report_date ? ` (${point.report_date})` : ""}`);
+      lines.push(`- ${point.test_name}: ${point.value_text} ${point.unit}${(point.date || point.report_date) ? ` (${point.date || point.report_date})` : ""}`);
     }
     lines.push("");
   }
@@ -751,9 +756,13 @@ export function Visit({ fields, setFields, step, setStep, labPoints, medFields, 
   const steps = ["Concern", "Timeline", "Questions", "Summary"];
 
   return <div className="workflow-view visit-wizard">
-    <p className="eyebrow">VISIT PREPARATION</p>
-    <h2>Make the visit count.</h2>
-    <p className="workflow-lead">Organize patient-provided information into a clear visit preparation summary.</p>
+    <PageHero
+      eyebrow="Visit preparation"
+     
+      title="Make the visit"
+      accent="count."
+      lead="Organize patient-provided information into a clear visit preparation summary."
+    />
     <div className="visit-wizard-steps" aria-label="Visit preparation steps">
       <div className="visit-step-pills">
         {steps.map((label, index) => (
@@ -802,13 +811,19 @@ export function Visit({ fields, setFields, step, setStep, labPoints, medFields, 
 
 export function DemoMode({ onSyntheticPipeline, onSampleMedication, onSampleVoice, onSampleVisit }: { onSyntheticPipeline: () => void; onSampleMedication: () => void; onSampleVoice: () => void; onSampleVisit: () => void }) {
   return <div className="workflow-view">
-    <p className="eyebrow">DEMO MODE</p>
-    <h2>Try with synthetic data.</h2>
-    <p className="workflow-lead">One click loads a three-date synthetic lab report (January, April, August). No personal medical information is required.</p>
-    <button type="button" className="forest-button demo-hero-cta" onClick={onSyntheticPipeline}>
-      <PlayCircle size={18} /> Try with synthetic data
-    </button>
-    <p className="demo-pipeline-caption">Walkthrough: extraction → verification → Labs → explanation → source-page drill-down</p>
+    <PageHero
+      eyebrow="Demo mode"
+     
+      title="Try with"
+      accent="synthetic data."
+      lead="One click loads a three-date synthetic lab report (January, April, August). No personal medical information is required."
+      actions={<>
+        <button type="button" className="forest-button demo-hero-cta" onClick={onSyntheticPipeline}>
+          <PlayCircle size={18} /> Try with synthetic data
+        </button>
+        <p className="demo-pipeline-caption">Walkthrough: extraction → verification → Labs → explanation → source-page drill-down</p>
+      </>}
+    />
     <div className="demo-grid demo-secondary-grid">
       <button type="button" className="demo-card" onClick={onSampleMedication}>
         <span className="quick-icon"><Pill size={18} /></span>
@@ -833,9 +848,7 @@ export function EvaluationDashboard() {
   const [unlocked, setUnlocked] = useState(false);
   if (!unlocked) {
     return <div className="workflow-view">
-      <p className="eyebrow">EVALUATION</p>
-      <h2>Engineering evaluation</h2>
-      <p className="workflow-lead">Synthetic test metrics for portfolio review. Protected from casual browsing.</p>
+      <PageHero eyebrow="Evaluation" title="Engineering evaluation" lead="Synthetic test metrics for portfolio review. Protected from casual browsing." />
       <div className="eval-gate">
         <Lock size={18} />
         <p>Unlock to view synthetic evaluation results.</p>
@@ -845,9 +858,7 @@ export function EvaluationDashboard() {
   }
   return <div className="workflow-view">
     <div className="eval-banner"><Lock size={14} /> Engineering evaluation (synthetic tests — no patient data)</div>
-    <p className="eyebrow">EVALUATION</p>
-    <h2>Safety &amp; quality metrics</h2>
-    <p className="workflow-lead">Results from synthetic regression suites used in engineering review.</p>
+    <PageHero eyebrow="Evaluation" title="Safety & quality metrics" lead="Results from synthetic regression suites used in engineering review." />
     <table className="eval-table">
       <thead><tr><th>Check</th><th>Result</th><th>Metric</th></tr></thead>
       <tbody>
@@ -884,6 +895,29 @@ function formatCollectionDate(value?: string | null) {
   return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function pointDate(point: LabPoint) {
+  return point.date || point.collection_date || point.report_date || null;
+}
+
+/** "Collected" only when the confirmed date really is a collection date. */
+function dateKindLabel(point: LabPoint) {
+  if (!pointDate(point)) return "No date on report";
+  if (point.date_source === "collection") return "Collected";
+  if (point.date_source === "report") return "Report date";
+  return "Date on report";
+}
+
+function notPlottedNote(point: LabPoint, seriesUnit: string) {
+  switch (point.not_plotted_reason) {
+    case "duplicate": return `Same result as in ${point.duplicate_document_name || "another report"}, so it is shown once on the chart`;
+    case "qualified_value": return "Printed as a limit, not an exact number, so it is not drawn on the chart";
+    case "not_numeric": return "Not a number, so it is not drawn on the chart";
+    case "no_date": return "No confirmed date, so it can't be placed on the chart";
+    case "different_unit": return `Reported in ${point.unit || "a different unit"}${seriesUnit ? `, not ${seriesUnit}` : ""}. Not converted or drawn on the chart`;
+    default: return "";
+  }
+}
+
 export function LabTimeline({
   tests, selectedCode, onSelectCode, points, selectedPoint, onSelectPoint, onInspectDocument, onExport, onAddToVisit, onAskAbout, onRequestDeleteObservation, onOpenDocuments,
 }: {
@@ -901,49 +935,65 @@ export function LabTimeline({
   onOpenDocuments: () => void;
 }) {
   const activeTest = (tests.find((test) => test.test_code === selectedCode)?.display_name) || selectedCode;
-  const selectedDate = selectedPoint?.collection_date || selectedPoint?.report_date;
+  const selectedDate = selectedPoint ? pointDate(selectedPoint) : null;
   const selectedPage = selectedPoint?.source_page || selectedPoint?.page_number || 1;
   const selectedReference = selectedPoint?.reference_range || selectedPoint?.reference_text;
   const selectedVerification = selectedPoint?.verification_status || selectedPoint?.verification_state;
   const reportFlag = reportFlagLabel(selectedPoint?.range_status);
   const uniqueDocuments = new Set(points.map((point) => point.document_id)).size;
   const extractionConfidence = confidenceLabel(selectedPoint?.confidence);
-  const latest = points.length ? points[points.length - 1] : null;
+  // Latest = the most recent dated result that isn't a repeat of another.
+  const dated = points.filter((point) => pointDate(point) && !point.duplicate_of);
+  const latest = dated.length ? dated[dated.length - 1] : points.length ? points[points.length - 1] : null;
+  const chartPoints = points.filter(isPlottable);
+  const seriesUnit = chartPoints.length ? chartPoints[chartPoints.length - 1].unit : "";
+  const offChart = points.filter((point) => !isPlottable(point));
+  const duplicateCount = points.filter((point) => point.duplicate_of).length;
+  const otherUnits = Array.from(new Set(points.filter((point) => point.not_plotted_reason === "different_unit").map((point) => point.unit || "no unit")));
+  const conflictDates = Array.from(new Set(points.filter((point) => point.conflicting_values?.length).map((point) => formatCollectionDate(pointDate(point)))));
+  const testOptions = tests.length ? tests : [{ test_code: "hemoglobin_a1c", display_name: "Hemoglobin A1C", observation_count: 0, has_data: false }];
+  const withData = testOptions.filter((test) => test.has_data);
+  const withoutData = testOptions.filter((test) => !test.has_data);
 
   return <div className="workflow-view lab-timeline-view">
-    <div className="workflow-heading-row">
-      <div>
-        <p className="eyebrow">LAB TIMELINE</p>
-        <h2>Labs</h2>
-        <p className="workflow-lead">Explore verified measurements across reports.</p>
-      </div>
-      <div className="heading-actions">
+    <PageHero
+      eyebrow="Lab timeline"
+     
+      title="Labs"
+      lead="Explore verified measurements across reports."
+      actions={<>
         <label className="timeline-control">
           <span className="sr-only">Test selector</span>
           <select value={selectedCode} onChange={(event) => onSelectCode(event.target.value)} aria-label="Test selector">
-            {(tests.length ? tests : [{ test_code: "hemoglobin_a1c", display_name: "Hemoglobin A1C", observation_count: 0, has_data: false }]).map((test) => (
-              <option key={test.test_code} value={test.test_code}>{test.display_name}</option>
-            ))}
+            {!testOptions.some((test) => test.test_code === selectedCode) && <option value={selectedCode}>{activeTest}</option>}
+            {withData.length > 0 && <optgroup label="Your results">
+              {withData.map((test) => <option key={test.test_code} value={test.test_code}>{test.display_name} ({test.observation_count})</option>)}
+            </optgroup>}
+            {withoutData.length > 0 && <optgroup label="No results yet">
+              {withoutData.map((test) => <option key={test.test_code} value={test.test_code}>{test.display_name}</option>)}
+            </optgroup>}
           </select>
         </label>
         <button type="button" className="quiet-button" onClick={onAskAbout} disabled={!points.length}><Sparkles size={14} /> Understand this result</button>
         <button type="button" className="quiet-button" onClick={onAddToVisit}><Stethoscope size={14} /> Add to visit prep</button>
         <button type="button" className="quiet-button" onClick={onExport} disabled={!points.length}><Clipboard size={14} /> Export CSV</button>
-      </div>
-    </div>
+        {!points.length && <p className="page-hero-note">Understanding and export become available once this test has verified results.</p>}
+      </>}
+    />
 
     {latest && (
       <div className="latest-result-card">
         <p className="panel-kicker">Latest verified result · {activeTest}</p>
         <p className="lab-result-value">{latest.value_text} {latest.unit}</p>
-        <p className="lab-result-date">{formatCollectionDate(latest.collection_date || latest.report_date)}</p>
+        <p className="lab-result-date">{pointDate(latest) ? `${dateKindLabel(latest)} ${formatCollectionDate(pointDate(latest))}` : "No date on report"}</p>
+        {latest.original_name && latest.original_name !== latest.test_name ? <p className="latest-ref">Printed on the report as “{latest.original_name}”</p> : null}
         {reportFlagLabel(latest.range_status) ? <p className="lab-range-flag">{reportFlagLabel(latest.range_status)}</p> : null}
         {(latest.reference_range || latest.reference_text) ? <p className="latest-ref">Printed reference range: {latest.reference_range || latest.reference_text}</p> : null}
       </div>
     )}
 
     <div className="lab-chart-panel">
-      {points.length ? (
+      {chartPoints.length ? (
         <LabTrendChart
           points={points}
           selectedId={selectedPoint?.observation_id}
@@ -951,6 +1001,8 @@ export function LabTimeline({
           formatDate={formatCollectionDate}
           testName={activeTest}
         />
+      ) : points.length ? (
+        <p className="lab-chart-empty">None of these results can be drawn on a chart (see the notes in the table), so they are listed below.</p>
       ) : (
         <EmptyState
           title="No verified measurements yet"
@@ -960,10 +1012,17 @@ export function LabTimeline({
         </EmptyState>
       )}
     </div>
-    {points.length > 0 && <p className="lab-timeline-summary">{points.length} verified measurement{points.length === 1 ? "" : "s"} · {uniqueDocuments} source report{uniqueDocuments === 1 ? "" : "s"}</p>}
+    {points.length > 0 && <p className="lab-timeline-summary">{points.length} verified measurement{points.length === 1 ? "" : "s"} · {uniqueDocuments} source report{uniqueDocuments === 1 ? "" : "s"}{chartPoints.length === 1 ? " · one result, so no trend is shown" : ""}</p>}
+    {(offChart.length > 0 || conflictDates.length > 0) && <ul className="lab-data-notes" aria-label="Notes about these results">
+      {duplicateCount > 0 && <li>{duplicateCount} result{duplicateCount === 1 ? " appears" : "s appear"} in more than one report with the same date and value; each is drawn once.</li>}
+      {otherUnits.length > 0 && <li>Some results use {otherUnits.join(", ")} instead of {seriesUnit || "the chart's unit"}. Units are never converted, so those are listed but not drawn.</li>}
+      {offChart.some((point) => point.not_plotted_reason === "qualified_value" || point.not_plotted_reason === "not_numeric") && <li>Results printed as a limit (like “&lt;0.5”) or as text are listed but not drawn.</li>}
+      {offChart.some((point) => point.not_plotted_reason === "no_date") && <li>Results without a confirmed date are listed last and not drawn. Missing dates aren&apos;t filled in.</li>}
+      {conflictDates.length > 0 && <li>Different values were confirmed for the same date ({conflictDates.join(", ")}). Check the source reports.</li>}
+    </ul>}
     {points.length > 0 && <table className="lab-table">
       <caption className="sr-only">{activeTest} verified measurements</caption>
-      <thead><tr><th>Date</th><th>Result</th><th>Report flag</th><th>Source</th></tr></thead>
+      <thead><tr><th>Date</th><th>Result</th><th className="lab-col-flag">Report flag</th><th>Source</th></tr></thead>
       <tbody>
         {points.map((point) => (
           <tr
@@ -971,7 +1030,7 @@ export function LabTimeline({
             className={selectedPoint?.observation_id === point.observation_id ? "selected" : ""}
             onClick={() => onSelectPoint(point)}
             tabIndex={0}
-            aria-label={`${point.value_text} ${point.unit}, ${formatCollectionDate(point.collection_date || point.report_date)}. Open provenance`}
+            aria-label={`${point.value_text} ${point.unit}, ${formatCollectionDate(pointDate(point))}. Open provenance`}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
@@ -979,10 +1038,22 @@ export function LabTimeline({
               }
             }}
           >
-            <td>{formatCollectionDate(point.collection_date || point.report_date)}</td>
-            <td>{point.value_text} {point.unit}</td>
-            <td>{point.source_flag === "H" ? "High" : point.source_flag === "L" ? "Low" : reportFlagLabel(point.range_status) || "—"}</td>
-            <td>{point.document_name}</td>
+            <td>
+              {formatCollectionDate(pointDate(point))}
+              {pointDate(point) && <small className="lab-cell-note">{dateKindLabel(point)}</small>}
+            </td>
+            <td>
+              <span className="mg-num">{point.value_text}</span> {point.unit}
+              {point.reference_range || point.reference_text ? <small className="lab-cell-note">Printed range {point.reference_range || point.reference_text}</small> : null}
+              {notPlottedNote(point, seriesUnit) && <small className="lab-cell-note is-flagged">{notPlottedNote(point, seriesUnit)}</small>}
+              {point.conflicting_values?.length ? <small className="lab-cell-note is-flagged">Also confirmed for this date: {point.conflicting_values.join(", ")}</small> : null}
+              {(point.source_flag || reportFlagLabel(point.range_status)) && <small className="lab-cell-note lab-flag-inline">Report flag: {point.source_flag === "H" ? "High" : point.source_flag === "L" ? "Low" : point.source_flag || reportFlagLabel(point.range_status)}</small>}
+            </td>
+            <td className="lab-col-flag">{point.source_flag === "H" ? "High" : point.source_flag === "L" ? "Low" : point.source_flag ? point.source_flag : reportFlagLabel(point.range_status) || "—"}</td>
+            <td className="lab-col-source">
+              {point.document_name}
+              <small className="lab-cell-note">Page {point.source_page || point.page_number}</small>
+            </td>
           </tr>
         ))}
       </tbody>
@@ -993,24 +1064,27 @@ export function LabTimeline({
         <p className="eyebrow">LAB VALUE PROVENANCE</p>
         <h2>{selectedPoint.test_name}</h2>
         <p className="lab-result-value">{selectedPoint.value_text} {selectedPoint.unit}</p>
-        <p className="lab-result-date">{formatCollectionDate(selectedDate)}</p>
+        <p className="lab-result-date">{selectedDate ? `${dateKindLabel(selectedPoint)} ${formatCollectionDate(selectedDate)}` : "No date on report"}</p>
+        {notPlottedNote(selectedPoint, seriesUnit) ? <p className="lab-drawer-note">{notPlottedNote(selectedPoint, seriesUnit)}</p> : null}
         {reportFlag ? <p className="lab-range-flag">{reportFlag}</p> : null}
         <p className="panel-kicker">REPORT INFORMATION</p>
         <dl>
+          <div><dt>Name on report</dt><dd>{selectedPoint.original_name || selectedPoint.test_name}</dd></div>
           <div><dt>Printed reference range</dt><dd>{selectedReference || "Not listed on report"}</dd></div>
           <div><dt>Report flag</dt><dd>{selectedPoint.source_flag === "H" ? "High" : selectedPoint.source_flag === "L" ? "Low" : reportFlag || "None listed"}</dd></div>
         </dl>
         <p className="panel-kicker">VERIFICATION</p>
         <dl>
-          <div><dt>Status</dt><dd>{selectedVerification === "confirmed" || selectedVerification === "human_verified" ? "✓ Confirmed" : (selectedVerification || "Unknown")}</dd></div>
+          <div><dt>Status</dt><dd>{selectedPoint.review_status === "corrected" ? "✓ Confirmed with a correction" : selectedVerification === "confirmed" || selectedVerification === "human_verified" ? "✓ Confirmed" : (selectedVerification || "Unknown")}</dd></div>
+          {selectedPoint.review_status === "corrected" && selectedPoint.extracted_value != null && <div><dt>Originally read as</dt><dd>{selectedPoint.extracted_value || "Nothing (unread)"}</dd></div>}
+          {selectedPoint.reviewed_at && <div><dt>Reviewed</dt><dd>{new Date(selectedPoint.reviewed_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</dd></div>}
           {extractionConfidence ? <div><dt>Extraction quality</dt><dd>{extractionConfidence} <small className="confidence-note">(extraction only — not medical correctness)</small></dd></div> : null}
         </dl>
         <p className="panel-kicker">SOURCE</p>
         <dl>
           <div><dt>Document</dt><dd>{selectedPoint.document_name}</dd></div>
           <div><dt>Page</dt><dd>{selectedPage}</dd></div>
-          {selectedPoint.extracted_value != null && <div><dt>Extracted value</dt><dd>{selectedPoint.extracted_value}</dd></div>}
-          {selectedPoint.confirmed_value != null && <div><dt>Confirmed value</dt><dd>{selectedPoint.confirmed_value}</dd></div>}
+          {selectedPoint.source_text ? <div><dt>Line on the page</dt><dd><code>{selectedPoint.source_text}</code></dd></div> : null}
         </dl>
         <div className="lab-point-actions">
           <button type="button" className="forest-button" onClick={() => onInspectDocument(selectedPoint.document_id, selectedPage, selectedPoint.field_id)}>
@@ -1032,6 +1106,9 @@ export function SystemStatusView({ status, health, onRetry }: { status: SystemSt
   const raw = status?.components || Object.entries(health?.statuses || {}).map(([key, value]) => ({ name: friendlyHealthLabel(key, healthLabels[key] || key), key, status: value.status, detail: value.detail }));
   const byLabel = new Map<string, { name: string; key: string; status: string; detail: string }>();
   for (const component of raw) {
+    // An optional integration that isn't connected (the API says "(optional)")
+    // must not mark the feature it shares a label with as unavailable.
+    if (component.status !== "ready" && /\(optional\)/i.test(component.detail || "")) continue;
     const name = friendlyHealthLabel(component.key, component.name);
     const existing = byLabel.get(name);
     const rank = (s: string) => (s === "ready" ? 2 : s === "degraded" ? 1 : 0);
@@ -1043,9 +1120,7 @@ export function SystemStatusView({ status, health, onRetry }: { status: SystemSt
   const components = preferred.map((name) => byLabel.get(name) || { name, key: name, status: "unknown", detail: "Not reported by the service" });
   const limited = components.some((component) => friendlyComponentStatus(component.status, component.detail) === "Limited" || friendlyComponentStatus(component.status, component.detail) === "Unavailable");
   return <div className="workflow-view system-status-view">
-    <p className="eyebrow">SYSTEM</p>
-    <h2>System Status</h2>
-    <p className="workflow-lead">Service availability for document processing and educational features. Documents and verified information remain accessible when explanations are limited.</p>
+    <PageHero eyebrow="System" title="System Status" lead="Service availability for document processing and educational features. Documents and verified information remain accessible when explanations are limited." />
     {limited && <p className="system-limited-note">Some educational explanations may be temporarily unavailable. Your documents and verified information remain accessible.</p>}
     <div className="system-grid">
       {components.map((component) => {
@@ -1074,7 +1149,7 @@ export function Sources({ sources, library, onSelect }: { sources: Source[]; lib
   if (sources.length) {
     return <div className="workflow-view"><p className="eyebrow">EXPLANATION PROVENANCE</p><h2>Cited sources.</h2><p className="workflow-lead">Plain-language statement → Citation → Approved knowledge source → Source/version</p><div className="source-list">{sources.map((source) => <button key={source.number} onClick={() => onSelect(source.number)}><span>[{source.number}]</span><div><strong>{source.publisher}</strong><b>{source.title}</b><small>{source.reviewed || "Approved source"}</small></div><ChevronRight size={17} /></button>)}</div></div>;
   }
-  return <div className="workflow-view"><p className="eyebrow">SOURCE EVIDENCE</p><h2>Approved sources.</h2><p className="workflow-lead">Trusted local retrieval keeps educational explanations grounded. Lab values use a separate provenance chain back to the original report page.</p><Input className="source-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search publishers or titles..." aria-label="Search approved sources" /><div className="source-list">{filtered.length ? filtered.map((source) => <a key={source.id} href={source.url || undefined} target={source.url ? "_blank" : undefined} rel={source.url ? "noreferrer" : undefined} className={source.url ? "" : "no-link"}><span><BookOpen size={15} /></span><div><strong>{source.publisher}</strong><b>{source.title}</b><small>{source.reviewed ? `Reviewed ${source.reviewed}` : "Approved source"}</small></div>{source.url && <ArrowUpRight size={16} />}</a>) : <div className="empty-panel"><BookOpen size={23} /><p>{library.length ? "No sources match that search." : "No approved sources are available yet."}</p></div>}</div></div>;
+  return <div className="workflow-view"><PageHero eyebrow="Source evidence" title="Approved" accent="sources." lead="Trusted local retrieval keeps educational explanations grounded. Lab values use a separate provenance chain back to the original report page." /><Input className="source-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search publishers or titles..." aria-label="Search approved sources" /><div className="source-list">{filtered.length ? filtered.map((source) => <a key={source.id} href={source.url || undefined} target={source.url ? "_blank" : undefined} rel={source.url ? "noreferrer" : undefined} className={source.url ? "" : "no-link"}><span><BookOpen size={15} /></span><div><strong>{source.publisher}</strong><b>{source.title}</b><small>{source.reviewed ? `Reviewed ${source.reviewed}` : "Approved source"}</small></div>{source.url && <ArrowUpRight size={16} />}</a>) : <div className="empty-panel"><BookOpen size={23} /><p>{library.length ? "No sources match that search." : "No approved sources are available yet."}</p></div>}</div></div>;
 }
 
 export function Privacy({ onClose, onClear }: { onClose: () => void; onClear: () => void }) {

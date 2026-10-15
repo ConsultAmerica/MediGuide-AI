@@ -49,9 +49,10 @@ def test_empty_text_returns_empty():
     assert split_report_sections("   \n  ") == {}
 
 
-def test_repeated_header_keeps_first_occurrence():
-    """A section header appearing twice (e.g. an addendum) keeps the first
-    span rather than being overwritten by the second."""
+def test_repeated_header_keeps_both_passages_in_order():
+    """A section header appearing twice (e.g. an addendum) keeps both
+    passages, first one first. The previous behaviour kept only the first
+    and silently dropped the radiologist's later wording."""
     text = "FINDINGS: First set of findings.\nFINDINGS: Addendum findings."
     sections = split_report_sections(text)
-    assert sections["findings"] == "First set of findings."
+    assert sections["findings"] == "First set of findings.\n\nAddendum findings."

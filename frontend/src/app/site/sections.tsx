@@ -1,4 +1,5 @@
 import Image from "next/image";
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import {
   ArrowRight, BadgeCheck, BookOpen, Check, ClipboardList, FileSearch, FileText, Lock, MessageCircleQuestion,
@@ -10,36 +11,71 @@ import { HeroVisual } from "./HeroVisual";
 import { TrendChart } from "./TrendChart";
 import reportPhoto from "../../../public/images/site/person-report-laptop.webp";
 import medicationPhoto from "../../../public/images/site/person-medication-label.webp";
+import reviewPhoto from "../../../public/images/site/person-tablet-review.webp";
+import consultPhoto from "../../../public/images/site/hero-consult.webp";
+import labPhoto from "../../../public/images/site/hero-lab.webp";
+import medicinePhoto from "../../../public/images/site/hero-medicine.webp";
+import ctaPhoto from "../../../public/images/site/cta-care.webp";
 
 const DEMO_HREF = "/workspace/documents?action=sample";
+
+type RevealFrom = "up" | "down" | "left" | "right" | "zoom";
+
+/** Props for a scroll reveal: the side it travels in from, and a stagger delay in ms. */
+function reveal(from: RevealFrom = "up", delay = 0) {
+  return { "data-reveal": from, style: { "--reveal-delay": `${delay}ms` } as CSSProperties };
+}
+
+/** Per-element delay for the hero's on-load entrance. */
+function rise(delay: number) {
+  return { style: { "--rise-delay": `${delay}ms` } as CSSProperties };
+}
+
+/* Decorative: the slides crossfade behind the headline, so they carry no alt text. */
+const HERO_SLIDES = [reviewPhoto, consultPhoto, labPhoto, medicinePhoto];
+
+function HeroSlideshow() {
+  return (
+    <div className="hero-media" aria-hidden="true">
+      {HERO_SLIDES.map((photo, i) => (
+        <div key={photo.src} className="hero-slide" style={{ "--slide": i } as CSSProperties}>
+          <Image src={photo} alt="" fill sizes="100vw" priority={i === 0} placeholder="blur" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function Hero() {
   return (
     <section className="hero" aria-labelledby="hero-title">
+      <HeroSlideshow />
       <div className="hero-backdrop" aria-hidden="true" />
       <div className="site-container hero-grid">
         <div className="hero-copy">
-          <p className="eyebrow eyebrow-on-band"><span className="eyebrow-dot" aria-hidden="true" />Health document intelligence</p>
+          <p className="eyebrow eyebrow-on-band hero-rise-down" {...rise(0)}><span className="eyebrow-dot" aria-hidden="true" />Health document intelligence</p>
           <h1 id="hero-title">
-            Your health information. <span className="hero-accent">Finally connected.</span>
+            <span className="hero-line hero-rise" {...rise(120)}>Your health</span>{" "}
+            <span className="hero-line hero-rise" {...rise(240)}>information.</span>{" "}
+            <span className="hero-accent hero-line hero-rise" {...rise(380)}>Finally connected.</span>
           </h1>
-          <p className="hero-lead">
+          <p className="hero-lead hero-rise-left" {...rise(560)}>
             Turn medical reports into verified, understandable information with connected timelines,
             grounded explanations and direct links to original evidence.
           </p>
-          <div className="hero-actions">
+          <div className="hero-actions hero-rise" {...rise(700)}>
             <Link href={DEMO_HREF} className="site-btn site-btn-lime site-btn-lg" prefetch={false}>
               Try it with synthetic data <ArrowRight size={17} aria-hidden="true" />
             </Link>
             <a href="#workflow" className="site-btn site-btn-outline-light site-btn-lg">See how it works</a>
           </div>
-          <p className="hero-note">
+          <p className="hero-note hero-rise" {...rise(820)}>
             <ShieldCheck size={15} aria-hidden="true" /> No sign-up needed for the demo · Synthetic data only · Educational, not diagnostic
           </p>
         </div>
         <HeroVisual />
       </div>
-      <div className="site-container">
+      <div className="site-container hero-rise" {...rise(900)}>
         <StatsStrip />
       </div>
     </section>
@@ -77,16 +113,20 @@ export function IconStrip() {
   ];
   return (
     <nav className="icon-strip" aria-label="Features">
-      <ul className="site-container">
-        {items.map(({ icon: Icon, label }) => (
-          <li key={label}>
-            <a href="#features">
-              <span className="icon-strip-icon"><Icon size={20} aria-hidden="true" /></span>
-              {label}
-            </a>
-          </li>
+      <div className="icon-strip-track">
+        {[false, true].map((copy) => (
+          <ul key={String(copy)} className="icon-strip-group" aria-hidden={copy || undefined}>
+            {items.map(({ icon: Icon, label }) => (
+              <li key={label}>
+                <a href="#features" tabIndex={copy ? -1 : undefined}>
+                  <span className="icon-strip-icon"><Icon size={20} aria-hidden="true" /></span>
+                  {label}
+                </a>
+              </li>
+            ))}
+          </ul>
         ))}
-      </ul>
+      </div>
     </nav>
   );
 }
@@ -94,7 +134,7 @@ export function IconStrip() {
 export function FeatureCards() {
   return (
     <div className="feature-cards">
-      <article className="feature-card" data-reveal>
+      <article className="feature-card" {...reveal("left")}>
         <div className="feature-card-media">
           <Image
             src={reportPhoto}
@@ -111,7 +151,7 @@ export function FeatureCards() {
         </div>
       </article>
 
-      <article className="feature-card feature-card-ui" data-reveal>
+      <article className="feature-card feature-card-ui" {...reveal("up", 140)}>
         <div className="feature-card-media feature-card-chart" aria-hidden="true">
           <div className="feature-chart-frame">
             <p className="feature-chart-title">Hemoglobin A1C <span>3 reports</span></p>
@@ -126,7 +166,7 @@ export function FeatureCards() {
         </div>
       </article>
 
-      <article className="feature-card" data-reveal>
+      <article className="feature-card" {...reveal("right", 280)}>
         <div className="feature-card-media">
           <Image
             src={medicationPhoto}
@@ -148,7 +188,7 @@ export function FeatureCards() {
 
 export function SectionHeading({ eyebrow, title, accent, body, id, centered = false }: { eyebrow: string; title: string; accent?: string; body?: string; id?: string; centered?: boolean }) {
   return (
-    <div className={centered ? "section-heading is-centered" : "section-heading"} data-reveal>
+    <div className={centered ? "section-heading is-centered" : "section-heading"} {...reveal(centered ? "down" : "left")}>
       <p className="eyebrow">{eyebrow}</p>
       <h2 id={id}>{title}{accent ? <> <span className="heading-accent">{accent}</span></> : null}</h2>
       {body && <p className="section-lead">{body}</p>}
@@ -159,7 +199,7 @@ export function SectionHeading({ eyebrow, title, accent, body, id, centered = fa
 export function BentoGrid() {
   return (
     <div className="bento">
-      <article className="bento-card bento-trend" data-reveal>
+      <article className="bento-card bento-trend" {...reveal("left")}>
         <div className="bento-copy">
           <p className="bento-kicker">Lab trends</p>
           <h3>Results from different reports, finally side by side.</h3>
@@ -176,7 +216,7 @@ export function BentoGrid() {
         </div>
       </article>
 
-      <article className="bento-card bento-verify" data-reveal>
+      <article className="bento-card bento-verify" {...reveal("right", 140)}>
         <p className="bento-kicker">Human verification</p>
         <h3>Reviewed by you, value by value.</h3>
         <div className="bento-fields" aria-hidden="true">
@@ -194,7 +234,7 @@ export function BentoGrid() {
         </div>
       </article>
 
-      <article className="bento-card bento-imaging" data-reveal>
+      <article className="bento-card bento-imaging" {...reveal("left")}>
         <div className="bento-copy">
           <p className="bento-kicker">Imaging reports</p>
           <h3>The radiologist&apos;s words, organised and explained.</h3>
@@ -208,7 +248,7 @@ export function BentoGrid() {
         </div>
       </article>
 
-      <article className="bento-card bento-source" data-reveal>
+      <article className="bento-card bento-source" {...reveal("up", 140)}>
         <p className="bento-kicker">Source evidence</p>
         <h3>Tap a value, see its page.</h3>
         <div className="bento-trace" aria-hidden="true">
@@ -218,7 +258,7 @@ export function BentoGrid() {
         </div>
       </article>
 
-      <article className="bento-card bento-dark" data-reveal>
+      <article className="bento-card bento-dark" {...reveal("right", 280)}>
         <p className="bento-kicker">Private by design</p>
         <h3>Only your account can open your records.</h3>
         <ul className="bento-list">
@@ -232,8 +272,8 @@ export function BentoGrid() {
 
 export function ImagingShowcase() {
   return (
-    <div className="imaging-show" data-reveal>
-      <div className="imaging-report">
+    <div className="imaging-show">
+      <div className="imaging-report" {...reveal("left")}>
         <div className="imaging-report-bar">
           <ScanLine size={15} aria-hidden="true" />
           <span>Original report · page 1</span>
@@ -248,7 +288,7 @@ export function ImagingShowcase() {
         </div>
       </div>
 
-      <div className="imaging-panels">
+      <div className="imaging-panels" {...reveal("right", 160)}>
         <div className="imaging-panel">
           <p className="imaging-panel-title">Structured findings</p>
           <ul className="imaging-findings">
@@ -297,15 +337,15 @@ export function TrustSection() {
   ];
   return (
     <div className="trust-grid">
-      <div className="trust-col" data-reveal>
+      <div className="trust-col" {...reveal("left")}>
         <h3><span className="trust-icon trust-yes"><Check size={16} aria-hidden="true" /></span>What MediGuide does</h3>
         <ul>{does.map((item) => <li key={item}>{item}</li>)}</ul>
       </div>
-      <div className="trust-col" data-reveal>
+      <div className="trust-col" {...reveal("right", 140)}>
         <h3><span className="trust-icon trust-no"><X size={16} aria-hidden="true" /></span>What it will not do</h3>
         <ul>{doesNot.map((item) => <li key={item}>{item}</li>)}</ul>
       </div>
-      <p className="trust-note" data-reveal>
+      <p className="trust-note" {...reveal("up", 200)}>
         MediGuide is an educational project and is not a medical device. The public demo runs on synthetic
         data. Please don&apos;t upload real health records to it. In an emergency, contact your local emergency services.
       </p>
@@ -316,8 +356,11 @@ export function TrustSection() {
 export function FinalCta() {
   return (
     <section className="final-cta" aria-labelledby="final-cta-title">
-      <div className="site-container final-cta-inner" data-reveal>
-        <div className="final-cta-copy">
+      <div className="final-cta-media" aria-hidden="true">
+        <Image src={ctaPhoto} alt="" fill sizes="100vw" placeholder="blur" />
+      </div>
+      <div className="site-container final-cta-inner">
+        <div className="final-cta-copy" {...reveal("left")}>
           <p className="eyebrow eyebrow-on-band">Try it in about a minute</p>
           <h2 id="final-cta-title">See your reports become <span className="hero-accent">something you can follow.</span></h2>
           <p>Load the synthetic three-report sample, review it, and follow a value back to its page.</p>
@@ -328,7 +371,7 @@ export function FinalCta() {
             <Link href="/signin?mode=register" className="site-btn site-btn-outline-light site-btn-lg" prefetch={false}>Create an account</Link>
           </div>
         </div>
-        <div className="final-cta-card" aria-hidden="true">
+        <div className="final-cta-card" aria-hidden="true" {...reveal("right", 180)}>
           <p className="final-cta-card-title"><BadgeCheck size={16} /> Report confirmed</p>
           <ul>
             {REPORT_ROWS.slice(0, 3).map((row) => (

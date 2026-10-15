@@ -57,7 +57,7 @@ def test_status_reflects_a_failed_attempt_for_retry_processing(api_client, monke
     def _broken(*args, **kwargs):
         raise RuntimeError("simulated extraction failure")
 
-    monkeypatch.setattr(imaging_module, "_render_pages_and_native_text", _broken)
+    monkeypatch.setattr(imaging_module, "_read_report", _broken)
 
     study_id = _create_study(api_client)
     upload = api_client.post(

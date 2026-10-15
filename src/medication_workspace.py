@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -29,8 +28,21 @@ from src.config import (
 from src.database.medication_repository import (
     create_medication_record,
     get_medication_record,
+    list_medication_records,
     serialize_medication_record,
+    utc_iso,
 )
+from src.medications.label_parser import (
+    FIELD_LABELS,
+    FIELD_ORDER,
+    LabelLine,
+    comparable,
+    compact,
+    lines_from_text,
+    name_key,
+    parse_label,
+)
+from src.ocr import ocr_available, ocr_image
 from src.auth.dependencies import not_found, require_user
 from src.database.models import User
 from src.database.session import session_scope
@@ -72,18 +84,27 @@ RETENTION_MINUTES = int(os.getenv("MED_WORKSPACE_RETENTION_MINUTES", "120"))
 
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
 
-Confidence = Literal["clearly_visible", "needs_review", "could_not_read"]
+Confidence = Literal["clearly_visible", "needs_review", "could_not_read", "not_found"]
 Source = Literal["upload", "typed"]
+Decision = Literal["unverified", "confirmed", "rejected"]
 
-MED_FIELD_LABELS: dict[str, str] = {
-    "medication_name": "Medication name",
-    "strength": "Strength",
-    "form": "Form",
-    "instructions": "Directions for use",
-    "quantity": "Quantity / refills",
-    "prescriber_or_pharmacy": "Prescriber or pharmacy",
+# Separate label details (see src/medications/label_parser.py).
+MED_FIELD_LABELS: dict[str, str] = dict(FIELD_LABELS)
+MED_FIELD_ORDER = list(FIELD_ORDER)
+# Keys used before the label details were separated, mapped to today's.
+LEGACY_KEYS = {"instructions": "directions", "form": "dosage_form", "prescriber_or_pharmacy": "pharmacy"}
+OCR_TRUSTED_CONFIDENCE = 85.0
+
+REVIEW_NOTES = {
+    "missing_directions": "No directions were found on this label. Nothing has been filled in for how to take it.",
+    "ambiguous_directions": "The directions are unclear (for example \"as directed\"). Check them with your pharmacist or prescriber.",
+    "risky_abbreviation": "The directions use an abbreviation that is easy to misread (such as QD or QOD). Check what it means with your pharmacist.",
+    "dose_range": "The directions give a range (for example 1-2 tablets), not a single amount.",
+    "frequency_not_stated": "The directions don't say how often to take it.",
+    "several_strengths": "More than one strength is printed on the medication line. Check which one applies.",
+    "ai_read": "This label was read by the AI fallback because its text couldn't be read directly. Check every detail against the label.",
+    "low_confidence_text": "Some of this label was hard to read. Check every detail against the label.",
 }
-MED_FIELD_ORDER = list(MED_FIELD_LABELS)
 
 
 class MedicationField(BaseModel):
@@ -93,6 +114,24 @@ class MedicationField(BaseModel):
     confidence: Confidence = "needs_review"
     source_text: str = ""
     user_edited: bool = False
+    # e.g. "from_directions", "ambiguous_directions", "dose_range", "shared_detail"
+    flags: list[str] = Field(default_factory=list)
+    # What was read before review (None for fields added by hand).
+    extracted: str | None = None
+    page: int = 1
+
+
+class MedicationEntry(BaseModel):
+    """One medication found in the upload (a label has one; a list may have several)."""
+    entry_id: str
+    index: int = 0
+    fields: list[MedicationField]
+    review_notes: list[str] = Field(default_factory=list)
+    decision: Decision = "unverified"
+    record_id: str | None = None
+    # Confirmed records with the same medication name: possible duplicates
+    # or conflicting details, shown for review. Never merged.
+    matches: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class MedicationState(BaseModel):
@@ -101,9 +140,15 @@ class MedicationState(BaseModel):
     filename: str = ""
     preview_url: str = ""
     status: str
+    # Mirrors the first entry, for older readers of this session.
     fields: list[MedicationField]
     other_visible_text: str = ""
     confirmed: bool = False
+    entries: list[MedicationEntry] = Field(default_factory=list)
+    # The label text exactly as read, and how it was read:
+    # typed | text_layer | ocr | vision
+    label_text: str = ""
+    text_source: str = ""
 
 
 class TypedLabelRequest(BaseModel):
@@ -113,10 +158,20 @@ class TypedLabelRequest(BaseModel):
 class ConfirmRequest(BaseModel):
     fields: list[MedicationField]
     reviewed_name_strength_instructions: bool
+    acknowledged_record_ids: list[str] = Field(default_factory=list)
+
+
+class EntryConfirmRequest(BaseModel):
+    fields: list[MedicationField]
+    reviewed: bool
+    # Existing records the reviewer compared this one with (required when
+    # the medication matches a record already confirmed).
+    acknowledged_record_ids: list[str] = Field(default_factory=list)
 
 
 class InfoRequest(BaseModel):
     question: str = ""
+    entry_id: str | None = None
 
 
 class MedicationInfoResponse(BaseModel):
@@ -232,25 +287,23 @@ Rules:
 
 
 def _build_fields(data: dict[str, Any]) -> tuple[list[MedicationField], str]:
-    fields: list[MedicationField] = []
-
-    for key in MED_FIELD_ORDER:
-        item = data.get(key) or {}
+    """Fields from the AI fallback's JSON. Its values are never trusted as
+    clearly visible: every one is marked for review."""
+    found: dict[str, MedicationField] = {}
+    for old_key in ("medication_name", "strength", "form", "instructions", "quantity", "prescriber_or_pharmacy"):
+        item = data.get(old_key) or {}
         if not isinstance(item, dict):
             item = {}
-
-        confidence = item.get("confidence", "needs_review")
-        if confidence not in {"clearly_visible", "needs_review", "could_not_read"}:
-            confidence = "needs_review"
-
-        fields.append(MedicationField(
-            key=key,
-            label=MED_FIELD_LABELS[key],
-            value=str(item.get("value", "")).strip(),
-            confidence=confidence,
-            source_text=str(item.get("source_text", "")).strip(),
-        ))
-
+        key = LEGACY_KEYS.get(old_key, old_key)
+        value = str(item.get("value", "")).strip()
+        confidence = "needs_review" if value else "could_not_read"
+        flags = ["ai_read"] + (["may_be_prescriber"] if old_key == "prescriber_or_pharmacy" and value else [])
+        found[key] = MedicationField(
+            key=key, label=MED_FIELD_LABELS[key], value=value, confidence=confidence,
+            source_text=str(item.get("source_text", "")).strip(), flags=flags, extracted=value,
+        )
+    fields = [found.get(key) or MedicationField(key=key, label=MED_FIELD_LABELS[key], confidence="not_found", extracted="")
+              for key in MED_FIELD_ORDER]
     other_text = str(data.get("other_visible_text", "")).strip()
     return fields, other_text
 
@@ -341,6 +394,177 @@ def _extract_from_text(label_text: str) -> tuple[list[MedicationField], str]:
     return _build_fields(_parse_json(response.message.content))
 
 
+def _fields_from_parsed(parsed, *, ocr: bool) -> list[MedicationField]:
+    fields: list[MedicationField] = []
+    for key in MED_FIELD_ORDER:
+        item = parsed.fields.get(key)
+        if item is None or not item.value:
+            fields.append(MedicationField(key=key, label=MED_FIELD_LABELS[key], confidence="not_found", extracted=""))
+            continue
+        uncertain = ocr and item.confidence < OCR_TRUSTED_CONFIDENCE
+        ambiguous = any(flag in item.flags for flag in ("ambiguous_directions", "risky_abbreviation", "dose_range", "several_strengths"))
+        fields.append(MedicationField(
+            key=key,
+            label=MED_FIELD_LABELS[key],
+            value=item.value,
+            confidence="needs_review" if (uncertain or ambiguous) else "clearly_visible",
+            source_text=item.source_text,
+            flags=list(item.flags),
+            extracted=item.value,
+            page=item.page,
+        ))
+    return fields
+
+
+def _entries_from_lines(medication_id: str, lines: list[LabelLine], *, ocr: bool) -> list[MedicationEntry]:
+    entries: list[MedicationEntry] = []
+    for index, parsed in enumerate(parse_label(lines)):
+        notes = list(parsed.review_notes)
+        if ocr and any(line.confidence < OCR_TRUSTED_CONFIDENCE for line in lines):
+            notes.append("low_confidence_text")
+        entries.append(MedicationEntry(
+            entry_id=f"{medication_id[:8]}-{index}",
+            index=index,
+            fields=_fields_from_parsed(parsed, ocr=ocr),
+            review_notes=notes,
+        ))
+    return entries
+
+
+def _ocr_label_lines(image: Image.Image, page: int) -> list[LabelLine]:
+    from src.labs.table_reader import Word, group_rows
+
+    result = ocr_image(image)
+    rows = group_rows([Word(w.x0, w.y0, w.x1, w.y1, w.text, w.confidence) for w in result.words])
+    return [LabelLine(row.text, page, min((w.confidence for w in row.words), default=0.0)) for row in rows if row.text.strip()]
+
+
+def _read_label_file(folder: Path, preview: Path) -> tuple[list[LabelLine], str]:
+    """The label's lines and how they were read: the PDF's own text first,
+    then local OCR. Nothing is sent to an outside service."""
+    pdf_path = folder / "upload.pdf"
+    if pdf_path.exists():
+        doc = pymupdf.open(pdf_path)
+        try:
+            lines = [LabelLine(text.strip(), index + 1) for index, page in enumerate(doc) if index < 5
+                     for text in page.get_text("text").splitlines() if text.strip()]
+            if lines:
+                return lines, "text_layer"
+            if ocr_available():
+                ocr_lines: list[LabelLine] = []
+                for index, page in enumerate(doc):
+                    if index >= 3:
+                        break
+                    pix = page.get_pixmap(dpi=300, alpha=False)
+                    ocr_lines.extend(_ocr_label_lines(Image.frombytes("RGB", (pix.width, pix.height), pix.samples), index + 1))
+                return ocr_lines, "ocr"
+        finally:
+            doc.close()
+        return [], ""
+    if ocr_available():
+        with Image.open(preview) as image:
+            return _ocr_label_lines(image.convert("RGB"), 1), "ocr"
+    return [], ""
+
+
+def _legacy_entry(state: MedicationState) -> MedicationEntry:
+    """Sessions saved before entries existed: their single set of fields."""
+    by_key: dict[str, MedicationField] = {}
+    for field in state.fields:
+        key = LEGACY_KEYS.get(field.key, field.key)
+        if key in MED_FIELD_LABELS:
+            by_key[key] = field.model_copy(update={"key": key, "label": MED_FIELD_LABELS[key]})
+    fields = [by_key.get(key) or MedicationField(key=key, label=MED_FIELD_LABELS[key], confidence="not_found", extracted="")
+              for key in MED_FIELD_ORDER]
+    return MedicationEntry(entry_id=f"{state.medication_id[:8]}-0", index=0, fields=fields,
+                           decision="confirmed" if state.confirmed else "unverified")
+
+
+def _ensure_entries(state: MedicationState) -> MedicationState:
+    if not state.entries:
+        state.entries = [_legacy_entry(state)]
+    return state
+
+
+def _value(fields: list[MedicationField], key: str) -> str:
+    return next((field.value for field in fields if LEGACY_KEYS.get(field.key, field.key) == key), "")
+
+
+_COMPARED = (("strength", "strength"), ("dose", "dose"), ("frequency", "frequency"),
+             ("directions", "instructions"), ("route", "route"), ("dosage_form", "form"))
+
+
+def _record_summary(record) -> dict[str, Any]:
+    return {
+        "record_id": record.id,
+        "medication_name": record.medication_name,
+        "strength": record.strength,
+        "directions": record.instructions,
+        "source": record.filename or ("typed label" if record.source == "typed" else "uploaded label"),
+        "confirmed_at": utc_iso(record.confirmed_at),
+    }
+
+
+def _matches_for(fields: list[MedicationField], records: list, exclude_ids: set[str]) -> list[dict[str, Any]]:
+    """Confirmed records naming the same medication (exact name match on the
+    printed, brand or generic name; similar-looking names are not matched).
+    "possible_duplicate" when the compared details agree, "conflict" when
+    any printed detail differs. Neither record is treated as current."""
+    keys = {name_key(_value(fields, k)) for k in ("medication_name", "generic_name", "brand_name")} - {""}
+    if not keys:
+        return []
+    matches: list[dict[str, Any]] = []
+    for record in records:
+        if record.id in exclude_ids:
+            continue
+        record_keys = {name_key(record.medication_name), name_key(record.generic_name or ""), name_key(record.brand_name or "")} - {""}
+        if not keys & record_keys:
+            continue
+        differences = []
+        for key, column in _COMPARED:
+            mine, theirs = _value(fields, key), getattr(record, column) or ""
+            if compact(mine) and compact(theirs) and comparable(key, mine) != comparable(key, theirs):
+                differences.append({"field": key, "label": MED_FIELD_LABELS[key], "this_label": mine, "existing_record": theirs})
+        matches.append({**_record_summary(record), "kind": "conflict" if differences else "possible_duplicate", "differences": differences})
+    return matches
+
+
+def _refresh_matches(state: MedicationState, user: User) -> MedicationState:
+    _ensure_entries(state)
+    with session_scope() as session:
+        records = list_medication_records(session, user.id)
+        own_ids = {entry.record_id for entry in state.entries if entry.record_id}
+        for entry in state.entries:
+            if entry.decision == "unverified":
+                entry.matches = _matches_for(entry.fields, records, own_ids)
+    state.fields = state.entries[0].fields if state.entries else state.fields
+    state.confirmed = any(entry.decision == "confirmed" for entry in state.entries)
+    if state.entries and all(entry.decision != "unverified" for entry in state.entries):
+        state.status = "confirmed" if state.confirmed else "rejected"
+    return state
+
+
+def _new_state(medication_id: str, *, source: Source, filename: str, preview_url: str,
+               entries: list[MedicationEntry], label_text: str, text_source: str,
+               fallback_fields: list[MedicationField] | None = None, other_text: str = "") -> MedicationState:
+    if not entries and fallback_fields is not None:
+        entries = [MedicationEntry(entry_id=f"{medication_id[:8]}-0", index=0, fields=fallback_fields,
+                                   review_notes=["ai_read"])]
+    return MedicationState(
+        medication_id=medication_id,
+        source=source,
+        filename=filename,
+        preview_url=preview_url,
+        status="review_required",
+        fields=entries[0].fields if entries else [],
+        other_visible_text=other_text,
+        confirmed=False,
+        entries=entries,
+        label_text=label_text,
+        text_source=text_source,
+    )
+
+
 async def _ingest_pdf(file: UploadFile, folder: Path) -> Path:
     pdf_path = folder / "upload.pdf"
     max_bytes = MAX_MB * 1024 * 1024
@@ -370,7 +594,9 @@ async def _ingest_pdf(file: UploadFile, folder: Path) -> Path:
 
 
 async def _ingest_image(file: UploadFile, folder: Path) -> Path:
-    raw_path = folder / "raw-upload"
+    # Keep the (already allowed) extension: the image validator checks the
+    # format by it, so a bare "raw-upload" rejected every photo label.
+    raw_path = folder / f"raw-upload{Path(file.filename or '').suffix.lower()}"
     max_bytes = MAX_IMAGE_MB * 1024 * 1024
     total = 0
 
@@ -415,18 +641,21 @@ async def upload(file: UploadFile = File(...), user: User = Depends(require_user
 
     try:
         preview = await (_ingest_pdf(file, folder) if suffix == ".pdf" else _ingest_image(file, folder))
-        fields, other_text = await run_in_threadpool(_extract_from_image, preview)
-
-        state = MedicationState(
-            medication_id=medication_id,
-            source="upload",
-            filename=file.filename or f"label{suffix}",
-            preview_url=f"/api/medications/v2/{medication_id}/preview",
-            status="review_required",
-            fields=fields,
-            other_visible_text=other_text,
-            confirmed=False,
+        lines, text_source = await run_in_threadpool(_read_label_file, folder, preview)
+        entries = _entries_from_lines(medication_id, lines, ocr=text_source == "ocr")
+        fallback_fields, other_text = None, ""
+        if not entries:
+            # Last resort: the local AI vision model. Every value it returns
+            # is marked for review.
+            fallback_fields, other_text = await run_in_threadpool(_extract_from_image, preview)
+            text_source = "vision"
+        state = _new_state(
+            medication_id, source="upload", filename=file.filename or f"label{suffix}",
+            preview_url=f"/api/medications/v2/{medication_id}/preview", entries=entries,
+            label_text="\n".join(line.text for line in lines), text_source=text_source,
+            fallback_fields=fallback_fields, other_text=other_text,
         )
+        state = _refresh_matches(state, user)
         _save_state(state)
         return state
 
@@ -452,15 +681,18 @@ async def upload_typed(request: TypedLabelRequest, user: User = Depends(require_
     folder = _claim_folder(medication_id, user)
 
     try:
-        fields, other_text = await run_in_threadpool(_extract_from_text, request.text)
-        state = MedicationState(
-            medication_id=medication_id,
-            source="typed",
-            status="review_required",
-            fields=fields,
-            other_visible_text=other_text,
-            confirmed=False,
+        lines = lines_from_text(request.text)
+        entries = _entries_from_lines(medication_id, lines, ocr=False)
+        fallback_fields, other_text, text_source = None, "", "typed"
+        if not entries:
+            fallback_fields, other_text = await run_in_threadpool(_extract_from_text, request.text)
+            text_source = "typed_ai"
+        state = _new_state(
+            medication_id, source="typed", filename="", preview_url="", entries=entries,
+            label_text=request.text.strip(), text_source=text_source,
+            fallback_fields=fallback_fields, other_text=other_text,
         )
+        state = _refresh_matches(state, user)
         _save_state(state)
         return state
     except (HTTPException, MediGuideError):
@@ -477,9 +709,26 @@ async def upload_typed(request: TypedLabelRequest, user: User = Depends(require_
         ) from e
 
 
+@router.get("/records")
+async def list_records_endpoint(user: User = Depends(require_user)) -> dict[str, Any]:
+    """Every confirmed medication, each with the other records that name
+    the same medication. MediGuide never decides which record is current;
+    differences are shown for the user to check with a pharmacist."""
+    with session_scope() as session:
+        records = list_medication_records(session, user.id)
+        items = []
+        for record in records:
+            item = serialize_medication_record(record)
+            fields = [MedicationField(key=key, label=MED_FIELD_LABELS[key], value=str(item.get(key) or ""))
+                      for key in MED_FIELD_ORDER]
+            item["matches"] = _matches_for(fields, records, {record.id})
+            items.append(item)
+        return {"records": items, "count": len(items)}
+
+
 @router.get("/{medication_id}", response_model=MedicationState)
 async def get_medication(medication_id: str, user: User = Depends(require_user)) -> MedicationState:
-    return _load_owned_state(medication_id, user)
+    return _refresh_matches(_load_owned_state(medication_id, user), user)
 
 
 @router.get("/{medication_id}/preview")
@@ -493,58 +742,78 @@ async def preview(medication_id: str, user: User = Depends(require_user)):
     return FileResponse(path, media_type="image/png")
 
 
-@router.post("/{medication_id}/confirm")
-async def confirm(medication_id: str, request: ConfirmRequest, user: User = Depends(require_user)):
-    state = _load_owned_state(medication_id, user)
-    if state.confirmed:
+def _record_id(state: MedicationState, entry: MedicationEntry) -> str:
+    return state.medication_id if entry.index == 0 else f"{state.medication_id}-{entry.index}"
+
+
+def _confirm_entry(state: MedicationState, entry: MedicationEntry, submitted: list[MedicationField],
+                   acknowledged: list[str], user: User) -> MedicationState:
+    if entry.decision == "confirmed":
         raise MediGuideError(
             "MEDICATION_ALREADY_CONFIRMED",
             "This medication was already confirmed. Its saved details are kept as they were.",
             status_code=409,
         )
-
-    if not request.reviewed_name_strength_instructions:
-        raise HTTPException(
-            status_code=400,
-            detail="Review the medication name, strength, and instructions first.",
-        )
-    if not request.fields:
-        raise HTTPException(status_code=400, detail="No reviewed fields supplied.")
-
-    by_key = {field.key: field for field in request.fields}
-    name_value = by_key.get("medication_name")
-
-    if not name_value or not name_value.value.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Medication name is required before confirming.",
+    by_key = {LEGACY_KEYS.get(field.key, field.key): field for field in submitted}
+    name = by_key.get("medication_name")
+    if not name or not name.value.strip():
+        raise HTTPException(status_code=400, detail="Medication name is required before confirming.")
+    pending = [m["record_id"] for m in entry.matches if m["record_id"] not in set(acknowledged)]
+    if pending:
+        raise MediGuideError(
+            "MATCH_REVIEW_REQUIRED",
+            "You already have a confirmed record for this medication. Compare the two before confirming; nothing will be merged.",
+            status_code=409,
         )
 
-    # The database row comes first: it is what lets a confirmed medication
-    # appear in the Unified Health Timeline after the session's temp files
-    # expire. If it can't be written, the session stays unconfirmed so the
-    # user can retry, instead of showing a confirmation that went nowhere.
+    # Values the reviewer confirmed; what was read stays in `extracted`.
+    original = {field.key: field for field in entry.fields}
+    confirmed_fields: list[MedicationField] = []
+    for key in MED_FIELD_ORDER:
+        before = original.get(key) or MedicationField(key=key, label=MED_FIELD_LABELS[key], confidence="not_found", extracted="")
+        after = by_key.get(key)
+        value = after.value.strip() if after is not None else before.value
+        confirmed_fields.append(before.model_copy(update={
+            "value": value,
+            "user_edited": value != (before.extracted if before.extracted is not None else before.value),
+        }))
+    values = {field.key: field.value for field in confirmed_fields}
+    record_id = _record_id(state, entry)
+    flags = sorted({*entry.review_notes, *(flag for field in confirmed_fields for flag in field.flags)})
     try:
-        values = {key: (by_key[key].value if key in by_key else "") for key in MED_FIELD_ORDER}
         with session_scope() as session:
             create_medication_record(
                 session,
-                medication_id=medication_id,
+                medication_id=record_id,
                 medication_name=values["medication_name"],
                 strength=values["strength"],
-                form=values["form"],
-                instructions=values["instructions"],
+                form=values["dosage_form"],
+                instructions=values["directions"],
                 quantity=values["quantity"],
-                prescriber_or_pharmacy=values["prescriber_or_pharmacy"],
+                prescriber_or_pharmacy=" · ".join(v for v in (values["prescriber"], values["pharmacy"]) if v),
                 source=state.source,
                 filename=state.filename,
                 other_visible_text=state.other_visible_text,
                 owner_id=user.id,
+                details={
+                    "brand_name": values["brand_name"], "generic_name": values["generic_name"],
+                    "route": values["route"], "dose": values["dose"], "frequency": values["frequency"],
+                    "refills": values["refills"], "prescriber": values["prescriber"], "pharmacy": values["pharmacy"],
+                    "prescription_date": values["prescription_date"],
+                    "source_session_id": state.medication_id, "entry_index": entry.index,
+                    "source_page": original.get("medication_name").page if original.get("medication_name") else None,
+                    "text_source": state.text_source,
+                    "extracted_snapshot": {f.key: f.extracted for f in entry.fields if f.extracted},
+                    "review_flags": flags,
+                    "acknowledged_records": list(acknowledged),
+                },
             )
+    except (HTTPException, MediGuideError):
+        raise
     except Exception as error:
         logger.warning(
             "medication_persist_failed",
-            extra={"medication_id": medication_id, "error_type": type(error).__name__},
+            extra={"medication_id": state.medication_id, "error_type": type(error).__name__},
         )
         raise MediGuideError(
             "CONFIRMATION_NOT_SAVED",
@@ -554,12 +823,73 @@ async def confirm(medication_id: str, request: ConfirmRequest, user: User = Depe
             technical_detail=f"{type(error).__name__}: {error}",
         ) from error
 
-    state.fields = [field.model_copy(update={"user_edited": True}) for field in request.fields]
-    state.confirmed = True
-    state.status = "confirmed"
+    entry.fields = confirmed_fields
+    entry.decision = "confirmed"
+    entry.record_id = record_id
+    entry.matches = []
+    state = _refresh_matches(state, user)
     _save_state(state)
+    return state
 
-    return {"medication_id": medication_id, "confirmed": True, "fields": state.fields}
+
+def _owned_entry(medication_id: str, entry_id: str, user: User) -> tuple[MedicationState, MedicationEntry]:
+    state = _refresh_matches(_load_owned_state(medication_id, user), user)
+    entry = next((item for item in state.entries if item.entry_id == entry_id), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="That medication isn't in this upload.")
+    return state, entry
+
+
+@router.post("/{medication_id}/entries/{entry_id}/confirm", response_model=MedicationState)
+async def confirm_entry(
+    medication_id: str, entry_id: str, request: EntryConfirmRequest, user: User = Depends(require_user)
+) -> MedicationState:
+    """Confirm one medication from the upload. Nothing is added to the
+    confirmed list without this explicit step."""
+    state, entry = _owned_entry(medication_id, entry_id, user)
+    if not request.reviewed:
+        raise HTTPException(status_code=400, detail="Review the medication details first.")
+    return _confirm_entry(state, entry, request.fields, request.acknowledged_record_ids, user)
+
+
+@router.post("/{medication_id}/entries/{entry_id}/reject", response_model=MedicationState)
+async def reject_entry(medication_id: str, entry_id: str, user: User = Depends(require_user)) -> MedicationState:
+    state, entry = _owned_entry(medication_id, entry_id, user)
+    if entry.decision == "confirmed":
+        raise HTTPException(status_code=409, detail="This medication is already confirmed.")
+    entry.decision = "rejected"
+    state = _refresh_matches(state, user)
+    _save_state(state)
+    return state
+
+
+@router.post("/{medication_id}/entries/{entry_id}/restore", response_model=MedicationState)
+async def restore_entry(medication_id: str, entry_id: str, user: User = Depends(require_user)) -> MedicationState:
+    state, entry = _owned_entry(medication_id, entry_id, user)
+    if entry.decision != "rejected":
+        raise HTTPException(status_code=409, detail="Only a rejected medication can be restored.")
+    entry.decision = "unverified"
+    state.status = "review_required"
+    state = _refresh_matches(state, user)
+    _save_state(state)
+    return state
+
+
+@router.post("/{medication_id}/confirm")
+async def confirm(medication_id: str, request: ConfirmRequest, user: User = Depends(require_user)):
+    """Confirms the first (or only) medication in the upload. Kept for
+    single-label clients; /entries/{entry_id}/confirm handles lists."""
+    state = _refresh_matches(_load_owned_state(medication_id, user), user)
+    if not request.reviewed_name_strength_instructions:
+        raise HTTPException(
+            status_code=400,
+            detail="Review the medication name, strength, and instructions first.",
+        )
+    if not request.fields:
+        raise HTTPException(status_code=400, detail="No reviewed fields supplied.")
+    entry = state.entries[0]
+    state = _confirm_entry(state, entry, request.fields, request.acknowledged_record_ids, user)
+    return {"medication_id": medication_id, "confirmed": True, "fields": state.entries[0].fields, "state": state.model_dump()}
 
 
 @router.get("/{medication_id}/record")
@@ -587,9 +917,12 @@ def _confirmed_context(fields: list[MedicationField]) -> str:
 async def info(
     medication_id: str, request: InfoRequest, user: User = Depends(require_user)
 ) -> MedicationInfoResponse:
-    state = _load_owned_state(medication_id, user)
-
-    if not state.confirmed:
+    state = _ensure_entries(_load_owned_state(medication_id, user))
+    confirmed_entries = [entry for entry in state.entries if entry.decision == "confirmed"]
+    chosen = next((entry for entry in confirmed_entries if entry.entry_id == request.entry_id), None) or (
+        confirmed_entries[0] if confirmed_entries else None
+    )
+    if chosen is None:
         raise HTTPException(
             status_code=409,
             detail="Human review and confirmation are required before educational information is provided.",
@@ -607,10 +940,10 @@ async def info(
                 limitations=["This response did not use the label or approved sources."],
             )
 
-    by_key = {field.key: field.value for field in state.fields}
+    by_key = {field.key: field.value for field in chosen.fields}
     name = by_key.get("medication_name", "")
     strength = by_key.get("strength", "")
-    context = _confirmed_context(state.fields)
+    context = _confirmed_context(chosen.fields)
 
     query = f"{name} {strength} medication purpose precautions patient education".strip()
     evidence = retrieve_approved_evidence(query, top_k=5)

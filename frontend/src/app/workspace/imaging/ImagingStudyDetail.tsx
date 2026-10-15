@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
+import { PageHero } from "../_components/PageHero";
 import { ArrowLeft, GitCompare, History, Maximize2, Minimize2, ScanLine, Trash2 } from "lucide-react";
 import {
   MODALITY_LABELS,
   formatStudyDate,
   type FindingExplanation,
   type ImagingFinding,
+  SECTION_LABELS,
   type ImagingStudy,
   type ReportGap,
+  type ReportLineItem,
   type ReportSection,
   deriveReportState,
 } from "./imaging-types";
@@ -19,7 +22,9 @@ import { ImagingNoReportEmptyState } from "./ImagingEmptyState";
 import { ImagingProcessingState } from "./ImagingProcessingState";
 import { ImagingProcessingFailedState } from "./ImagingErrorState";
 import { reportPagePreviewUrl } from "./imaging-api";
-import { AuthImage } from "../_components/AuthImage";
+import { ImagingPageViewer } from "./ImagingPageViewer";
+import { ImagingReportDetails } from "./ImagingReportDetails";
+import { ImagingBoundaryEditor } from "./ImagingBoundaryEditor";
 
 export type DetailTab = "overview" | "report" | "images" | "explanation" | "source";
 export const DETAIL_TABS: readonly DetailTab[] = ["overview", "report", "images", "explanation", "source"];
@@ -31,10 +36,13 @@ export function ImagingStudyDetail({
   findings,
   gaps,
   boundary,
-  editedSections,
-  setEditedSections,
-  reviewedTypes,
-  setReviewedTypes,
+  busySection,
+  onDecideSection,
+  onLoadLines,
+  onSaveBoundaries,
+  savingBoundaries,
+  applyingDetails,
+  onApplyDetails,
   findingDrafts,
   setFindingDrafts,
   reviewedFindingIds,
@@ -46,7 +54,6 @@ export function ImagingStudyDetail({
   transientStatus,
   processingError,
   processingProgress,
-  confirming,
   confirmingFindings,
   onBack,
   onOpenHistory,
@@ -54,7 +61,6 @@ export function ImagingStudyDetail({
   onUploadReport,
   onRetryUpload,
   onViewExistingReport,
-  onConfirm,
   onConfirmFindings,
   onExplainFinding,
   findingExplanation,
@@ -72,10 +78,13 @@ export function ImagingStudyDetail({
   findings: ImagingFinding[];
   gaps: ReportGap[];
   boundary: string;
-  editedSections: Record<string, string>;
-  setEditedSections: (value: Record<string, string>) => void;
-  reviewedTypes: Set<string>;
-  setReviewedTypes: (value: Set<string>) => void;
+  busySection: string | null;
+  onDecideSection: (sectionType: string, decision: "confirmed" | "rejected" | "unverified", text?: string) => Promise<boolean>;
+  onLoadLines: () => Promise<{ lines: ReportLineItem[]; adjustable: boolean } | null>;
+  onSaveBoundaries: (ranges: { section_type: string; line_start: number; line_end: number }[]) => Promise<boolean>;
+  savingBoundaries: boolean;
+  applyingDetails: boolean;
+  onApplyDetails: (fields: string[]) => void;
   findingDrafts: Record<string, string>;
   setFindingDrafts: (value: Record<string, string>) => void;
   reviewedFindingIds: Set<string>;
@@ -87,7 +96,6 @@ export function ImagingStudyDetail({
   transientStatus: "processing" | "failed" | null;
   processingError: string;
   processingProgress: { stage: string; retryAttempt: number; retryMax: number } | null;
-  confirming: boolean;
   confirmingFindings: boolean;
   onBack: () => void;
   onOpenHistory: () => void;
@@ -95,7 +103,6 @@ export function ImagingStudyDetail({
   onUploadReport: (file: File) => void;
   onRetryUpload: () => void;
   onViewExistingReport: () => void;
-  onConfirm: () => void;
   onConfirmFindings: (updates: { finding_id: string; confirmed_text: string; verification_status: string }[]) => void;
   onExplainFinding: (finding: ImagingFinding) => void;
   findingExplanation: FindingExplanation | null;
@@ -123,13 +130,38 @@ export function ImagingStudyDetail({
     setTabState(next);
     onTabChange?.(next);
   }
-  const [previewFailed, setPreviewFailed] = useState(false);
   const [activeFinding, setActiveFinding] = useState<ImagingFinding | null>(null);
+  // The section whose wording is outlined in the viewer.
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [boundaryLines, setBoundaryLines] = useState<ReportLineItem[] | null>(null);
+  const [linesAdjustable, setLinesAdjustable] = useState(false);
+  const pageCount = study.report_page_count ?? null;
+  const active = sections.find((section) => section.section_type === activeSection) || null;
+  const pageRegions = (active?.source_regions || []).filter((region) => region.page === selectedPage);
+  let viewerNote = "";
+  if (active) {
+    const label = SECTION_LABELS[active.section_type] || active.section_type;
+    const end = active.page_end || active.page_number;
+    if (selectedPage < active.page_number || selectedPage > end) {
+      viewerNote = `${label} is on page ${active.page_number}${end > active.page_number ? `–${end}` : ""}.`;
+    } else if (pageRegions.length) {
+      viewerNote = `Outlined: the ${label} wording on this page.`;
+    } else {
+      viewerNote = `No position was recorded for ${label}. Read it on the page yourself.`;
+    }
+  }
 
+  // Whether this report can have its boundaries adjusted (it was read
+  // with line positions). Asked once per report.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPreviewFailed(false);
-  }, [previewUrl]);
+    let cancelled = false;
+    if (!study.report_document_id) return;
+    void onLoadLines().then((data) => {
+      if (!cancelled) setLinesAdjustable(Boolean(data?.adjustable && data.lines.length));
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [study.report_document_id]);
 
   useEffect(() => {
     if (study.verification_status === "verified" && canShowOverview && !tabChosen.current) {
@@ -138,13 +170,13 @@ export function ImagingStudyDetail({
     }
   }, [study.verification_status, canShowOverview]);
 
-  const showPreviewImage = Boolean(previewUrl) && !previewFailed;
   const title =
     study.study_description?.trim() ||
     [MODALITY_LABELS[study.modality], study.body_region].filter(Boolean).join(" · ") ||
     MODALITY_LABELS[study.modality];
 
-  function viewSourcePage(pageNumber: number, documentId?: string) {
+  function viewSourcePage(pageNumber: number, documentId?: string, sectionType?: string) {
+    if (sectionType !== undefined) setActiveSection(sectionType);
     setSelectedPage(pageNumber);
     setTab("source");
     setViewerExpanded(true);
@@ -160,33 +192,28 @@ export function ImagingStudyDetail({
         <ArrowLeft size={14} /> Imaging / {MODALITY_LABELS[study.modality]}
       </button>
 
-      <div className="document-meta imaging-study-meta">
-        <ScanLine size={18} aria-hidden="true" />
-        <span>
-          <h2>{title}</h2>
-          <small>
-            {formatStudyDate(study.study_date)}
-            {study.institution ? ` · ${study.institution}` : ""}
-          </small>
-        </span>
-        <ImagingStatusChip state={state} />
-      </div>
+      <PageHero
+        className="imaging-study-meta"
+        eyebrow={`Imaging · ${MODALITY_LABELS[study.modality]}`}
+        title={title}
+        lead={`${formatStudyDate(study.study_date)}${study.institution ? ` · ${study.institution}` : ""}`}
+        meta={<ImagingStatusChip state={state} />}
+        actions={<>
+          <button type="button" className="quiet-button" onClick={onOpenHistory}>
+            <History size={14} /> View history
+          </button>
+          <button type="button" className="quiet-button" onClick={onOpenCompare}>
+            <GitCompare size={14} /> Compare
+          </button>
+          <button type="button" className="quiet-button imaging-delete" onClick={onRequestDelete}>
+            <Trash2 size={14} /> Delete study
+          </button>
+        </>}
+      />
 
       <p className="imaging-boundary imaging-image-boundary">
-        MediGuide explains the radiologist&apos;s report. It does not independently diagnose the scan.
+        <ScanLine size={14} aria-hidden="true" /> MediGuide explains the radiologist&apos;s report. It does not independently diagnose the scan.
       </p>
-
-      <div className="imaging-detail-actions">
-        <button type="button" className="quiet-button" onClick={onOpenHistory}>
-          <History size={14} /> View history
-        </button>
-        <button type="button" className="quiet-button" onClick={onOpenCompare}>
-          <GitCompare size={14} /> Compare
-        </button>
-        <button type="button" className="quiet-button imaging-delete" onClick={onRequestDelete}>
-          <Trash2 size={14} /> Delete study
-        </button>
-      </div>
 
       {transientStatus === "processing" && <ImagingProcessingState progress={processingProgress} />}
       {transientStatus === "failed" && (
@@ -245,38 +272,50 @@ export function ImagingStudyDetail({
 
           {tab === "report" ? (
             <div className="extraction-grid imaging-detail-grid">
-              <div className="document-preview imaging-viewer">
-                {showPreviewImage ? (
-                  <AuthImage src={previewUrl} alt={`Page ${selectedPage}`} onError={() => setPreviewFailed(true)} />
-                ) : (
-                  <span>No preview is available for this page.</span>
-                )}
-                <div className="imaging-page-nav">
-                  <button type="button" className="quiet-button" disabled={selectedPage <= 1} onClick={() => setSelectedPage(selectedPage - 1)}>
-                    Previous page
-                  </button>
-                  <span>Page {selectedPage}</span>
-                  <button type="button" className="quiet-button" onClick={() => setSelectedPage(selectedPage + 1)}>
-                    Next page
-                  </button>
+              <ImagingPageViewer
+                src={previewUrl}
+                page={selectedPage}
+                pageCount={pageCount}
+                onPage={setSelectedPage}
+                regions={pageRegions}
+                note={viewerNote}
+                extraControls={
                   <button type="button" className="quiet-button" aria-label="Expand" onClick={() => setViewerExpanded(true)}>
                     <Maximize2 size={14} />
                   </button>
-                </div>
-              </div>
+                }
+              />
               <div className="imaging-report-stack">
-                <ImagingReportPanel
-                  study={study}
-                  sections={sections}
-                  editedSections={editedSections}
-                  setEditedSections={setEditedSections}
-                  reviewedTypes={reviewedTypes}
-                  setReviewedTypes={setReviewedTypes}
-                  onConfirm={onConfirm}
-                  confirming={confirming}
-                  onViewSourcePage={(page) => viewSourcePage(page)}
-                  onOpenTerminology={onOpenTerminology}
-                />
+                <ImagingReportDetails study={study} applying={applyingDetails} onApply={onApplyDetails} />
+                {boundaryLines ? (
+                  <ImagingBoundaryEditor
+                    lines={boundaryLines}
+                    sections={sections}
+                    saving={savingBoundaries}
+                    onCancel={() => setBoundaryLines(null)}
+                    onSave={(ranges) => {
+                      void onSaveBoundaries(ranges).then((ok) => { if (ok) setBoundaryLines(null); });
+                    }}
+                  />
+                ) : (
+                  <ImagingReportPanel
+                    study={study}
+                    sections={sections}
+                    busySection={busySection}
+                    activeSection={activeSection}
+                    onDecide={onDecideSection}
+                    onSelectSection={(section) => {
+                      setActiveSection(section.section_type);
+                      setSelectedPage(section.page_number);
+                    }}
+                    onViewSourcePage={(section) => viewSourcePage(section.page_number, undefined, section.section_type)}
+                    onOpenTerminology={onOpenTerminology}
+                    canAdjustBoundaries={linesAdjustable}
+                    onAdjustBoundaries={() => {
+                      void onLoadLines().then((data) => { if (data?.lines.length) setBoundaryLines(data.lines); });
+                    }}
+                  />
+                )}
                 <ImagingFindingsReview
                   findings={findings}
                   drafts={findingDrafts}
@@ -302,13 +341,15 @@ export function ImagingStudyDetail({
                   ? "Opening the correct report page. Exact highlighting appears only when bounding-box evidence exists."
                   : "Report page images are available when the upload includes page previews. MediGuide does not diagnose scan pixels."}
               </p>
-              <div className="document-preview imaging-viewer imaging-viewer-full">
-                {showPreviewImage ? (
-                  <AuthImage src={previewUrl} alt={`Page ${selectedPage}`} onError={() => setPreviewFailed(true)} />
-                ) : (
-                  <span>No preview is available for this page.</span>
-                )}
-              </div>
+              <ImagingPageViewer
+                className="imaging-viewer-full"
+                src={previewUrl}
+                page={selectedPage}
+                pageCount={pageCount}
+                onPage={setSelectedPage}
+                regions={tab === "source" ? pageRegions : []}
+                note={tab === "source" ? viewerNote : ""}
+              />
             </div>
           )}
         </>

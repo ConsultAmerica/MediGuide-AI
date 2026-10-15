@@ -46,8 +46,42 @@ export interface ImagingStudy {
   study_date: string | null;
   institution: string;
   report_document_id: string | null;
+  report_page_count?: number | null;
+  /** What the report itself says about the study, and what the user applied. */
+  report_details?: ReportDetails | null;
   verification_status: "unverified" | "partially_verified" | "verified";
   created_at: string;
+}
+
+export interface ReportDetail {
+  value: string;
+  as_printed: string;
+  page: number;
+}
+
+export interface ReportDetails {
+  classification?: {
+    category: "radiology_report" | "not_radiology_report" | "uncertain";
+    modality: string | null;
+    modality_label: string;
+    modality_evidence: string;
+    headers_found: string[];
+  };
+  details?: Partial<Record<"exam_date" | "ordering_clinician" | "facility" | "study_description" | "body_region", ReportDetail>>;
+  applied?: Record<string, { value: string | null; previous: string | null; applied_at: string }>;
+}
+
+export interface SourceRegion {
+  page: number;
+  bbox: [number, number, number, number];
+  width: number;
+  height: number;
+}
+
+export interface ReportLineItem {
+  index: number;
+  page: number;
+  text: string;
 }
 
 export interface ReportSection {
@@ -58,8 +92,16 @@ export interface ReportSection {
   section_text: string;
   original_text: string;
   page_number: number;
+  page_end?: number;
   source_text: string;
-  verification_status: "unverified" | "confirmed";
+  verification_status: "unverified" | "confirmed" | "rejected";
+  /** native_text | tesseract_ocr | vision_ocr */
+  extraction_method?: string;
+  source_regions?: SourceRegion[];
+  line_start?: number | null;
+  line_end?: number | null;
+  boundary_adjusted?: boolean;
+  reviewed_at?: string | null;
 }
 
 export interface CompareSide {

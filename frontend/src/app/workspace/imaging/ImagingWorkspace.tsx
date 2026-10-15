@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog, type ToastTone } from "../polish-ui";
 import type {
@@ -38,7 +38,15 @@ export function ImagingWorkspace({
   route: ImagingRoute;
 }) {
   const router = useRouter();
-  const go = (next: ImagingRoute) => router.push(imagingUrl(next));
+  // Where the user last asked to go. An automatic tab sync (e.g. switching
+  // to the Report tab once an upload finishes) must not override a
+  // navigation the user started meanwhile: its router.replace() would queue
+  // after the pending push and drag them back to the study.
+  const intendedUrl = useRef<string | null>(null);
+  const go = (next: ImagingRoute) => {
+    intendedUrl.current = imagingUrl(next);
+    router.push(intendedUrl.current);
+  };
   const [view, setView] = useState<ImagingView>("landing");
   const [modalities, setModalities] = useState<ModalitySummary[]>([]);
   const [studies, setStudies] = useState<ImagingStudy[]>([]);
@@ -51,8 +59,10 @@ export function ImagingWorkspace({
   const [boundary, setBoundary] = useState(
     "MediGuide explains the radiologist's report. It does not independently diagnose the scan.",
   );
-  const [editedSections, setEditedSections] = useState<Record<string, string>>({});
-  const [reviewedTypes, setReviewedTypes] = useState<Set<string>>(new Set());
+  // The section whose decision is being saved (buttons wait on it).
+  const [busySection, setBusySection] = useState<string | null>(null);
+  const [savingBoundaries, setSavingBoundaries] = useState(false);
+  const [applyingDetails, setApplyingDetails] = useState(false);
   const [findingDrafts, setFindingDrafts] = useState<Record<string, string>>({});
   const [reviewedFindingIds, setReviewedFindingIds] = useState<Set<string>>(new Set());
   const [confirmingFindings, setConfirmingFindings] = useState(false);
@@ -68,7 +78,6 @@ export function ImagingWorkspace({
     retryMax: number;
   } | null>(null);
   const [lastUploadFile, setLastUploadFile] = useState<File | null>(null);
-  const [confirming, setConfirming] = useState(false);
   const [loading, setLoading] = useState("");
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -184,8 +193,7 @@ export function ImagingWorkspace({
     setSelectedStudy(study);
     setSelectedPage(page);
     setViewerExpanded(false);
-    setReviewedTypes(new Set());
-    setEditedSections({});
+    setBusySection(null);
     setFindingDrafts({});
     setReviewedFindingIds(new Set());
     setFindingExplanation(null);
@@ -205,13 +213,7 @@ export function ImagingWorkspace({
   async function loadSections(studyId: string) {
     try {
       const data = await imagingApi.fetchSections(apiUrl, studyId);
-      const fetched = data.sections || [];
-      setSections(fetched);
-      // Sections already confirmed on the backend (e.g. reopening a
-      // partially-verified study) start out "reviewed" too, so progress and
-      // the Confirm button reflect real prior confirmation, not a reset.
-      const confirmedTypes = fetched.filter((s) => s.verification_status === "confirmed").map((s) => s.section_type);
-      if (confirmedTypes.length > 0) setReviewedTypes(new Set(confirmedTypes));
+      setSections(data.sections || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load report sections.");
     }
@@ -260,16 +262,17 @@ export function ImagingWorkspace({
       goToStudy(study);
       setLoading("");
       const file = await imagingApi.downloadImagingSample(apiUrl, sample.slug, sample.filename);
-      await uploadReport(file);
+      // Pass the new study's id: `selectedStudy` in this closure is still the
+      // previous render's value, so relying on it silently skipped the upload.
+      await uploadReport(file, study.study_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load this sample report.");
       setLoading("");
     }
   }
 
-  async function uploadReport(file: File) {
-    if (!selectedStudy) return;
-    const studyId = selectedStudy.study_id;
+  async function uploadReport(file: File, studyId: string | undefined = selectedStudy?.study_id) {
+    if (!studyId) return;
     setLastUploadFile(file);
     setTransientStatus("processing");
     setProcessingError("");
@@ -325,24 +328,68 @@ export function ImagingWorkspace({
     if (lastUploadFile) void uploadReport(lastUploadFile);
   }
 
-  async function confirmSections() {
-    if (!selectedStudy) return;
-    setConfirming(true);
+  // One section's decision, saved immediately (so a review can be resumed).
+  async function decideSection(sectionType: string, decision: "confirmed" | "rejected" | "unverified", text?: string): Promise<boolean> {
+    if (!selectedStudy) return false;
+    setBusySection(sectionType);
     setError("");
     try {
-      const payload = Object.entries(editedSections).map(([section_type, text]) => ({ section_type, text }));
-      const data = await imagingApi.confirmSections(apiUrl, selectedStudy.study_id, payload, Array.from(reviewedTypes));
+      const data = await imagingApi.decideSection(apiUrl, selectedStudy.study_id, sectionType, decision, text);
       setSections(data.sections || []);
-      setSelectedStudy({ ...selectedStudy, verification_status: data.verification_status as ImagingStudy["verification_status"] });
+      setSelectedStudy({ ...selectedStudy, verification_status: data.verification_status });
       await loadFindings(selectedStudy.study_id);
-      pushToast(
-        data.verification_status === "verified" ? "Report information verified" : "Reviewed sections confirmed",
-        "success",
-      );
+      if (data.verification_status === "verified" && selectedStudy.verification_status !== "verified") {
+        pushToast("Report information verified", "success");
+      }
+      return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not confirm this report.");
+      setError(err instanceof Error ? err.message : "Could not save this decision.");
+      return false;
     } finally {
-      setConfirming(false);
+      setBusySection(null);
+    }
+  }
+
+  async function loadReportLines() {
+    if (!selectedStudy) return null;
+    try {
+      return await imagingApi.fetchReportLines(apiUrl, selectedStudy.study_id);
+    } catch {
+      return null;
+    }
+  }
+
+  async function saveBoundaries(ranges: { section_type: string; line_start: number; line_end: number }[]): Promise<boolean> {
+    if (!selectedStudy) return false;
+    setSavingBoundaries(true);
+    setError("");
+    try {
+      const data = await imagingApi.adjustBoundaries(apiUrl, selectedStudy.study_id, ranges);
+      setSections(data.sections || []);
+      setSelectedStudy({ ...selectedStudy, verification_status: data.verification_status });
+      await loadFindings(selectedStudy.study_id);
+      pushToast("Section boundaries updated. Review each section again.", "success");
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not change the section boundaries.");
+      return false;
+    } finally {
+      setSavingBoundaries(false);
+    }
+  }
+
+  async function applyDetails(fields: string[]) {
+    if (!selectedStudy) return;
+    setApplyingDetails(true);
+    setError("");
+    try {
+      const updated = await imagingApi.applyReportDetails(apiUrl, selectedStudy.study_id, fields);
+      setSelectedStudy(updated);
+      pushToast("Study details updated from the report", "success");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update the study details.");
+    } finally {
+      setApplyingDetails(false);
     }
   }
 
@@ -548,9 +595,12 @@ export function ImagingWorkspace({
           key={selectedStudy.study_id}
           initialTab={route.kind === "detail" ? route.tab : null}
           onTabChange={(tab) => {
-            if (route.kind === "detail" && route.tab !== tab) {
-              router.replace(imagingUrl({ ...route, tab }));
-            }
+            if (route.kind !== "detail" || route.tab === tab) return;
+            const studyPath = imagingUrl({ ...route, tab: null }).split("?")[0];
+            const heading = intendedUrl.current?.split("?")[0];
+            if (heading && heading !== studyPath) return; // user is navigating away
+            if (window.location.pathname !== studyPath) return;
+            router.replace(imagingUrl({ ...route, tab }));
           }}
           apiUrl={apiUrl}
           study={selectedStudy}
@@ -558,10 +608,13 @@ export function ImagingWorkspace({
           findings={findings}
           gaps={gaps}
           boundary={boundary}
-          editedSections={editedSections}
-          setEditedSections={setEditedSections}
-          reviewedTypes={reviewedTypes}
-          setReviewedTypes={setReviewedTypes}
+          busySection={busySection}
+          onDecideSection={decideSection}
+          onLoadLines={loadReportLines}
+          onSaveBoundaries={saveBoundaries}
+          savingBoundaries={savingBoundaries}
+          applyingDetails={applyingDetails}
+          onApplyDetails={(fields) => void applyDetails(fields)}
           findingDrafts={findingDrafts}
           setFindingDrafts={setFindingDrafts}
           reviewedFindingIds={reviewedFindingIds}
@@ -573,7 +626,6 @@ export function ImagingWorkspace({
           transientStatus={transientStatus}
           processingError={processingError}
           processingProgress={processingProgress}
-          confirming={confirming}
           confirmingFindings={confirmingFindings}
           onBack={() => go({ kind: "list", modality: selectedStudy.modality })}
           onOpenHistory={() => go({ kind: "history" })}
@@ -581,7 +633,6 @@ export function ImagingWorkspace({
           onUploadReport={(file) => void uploadReport(file)}
           onRetryUpload={retryUpload}
           onViewExistingReport={viewExistingReport}
-          onConfirm={() => void confirmSections()}
           onConfirmFindings={(updates) => void confirmFindingUpdates(updates)}
           onExplainFinding={(finding) => void explainFinding(finding)}
           findingExplanation={findingExplanation}

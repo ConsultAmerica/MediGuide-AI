@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { test, expect } from "@playwright/test";
-import { generateReportPdf, generateLabReportPdf } from "./helpers";
+import { confirmRemainingImagingSections, generateReportPdf, generateLabReportPdf } from "./helpers";
 
 const FIXTURES_DIR = path.join(__dirname, ".scratch", "fixtures");
 
@@ -27,9 +27,16 @@ test.describe("Global search — Cmd/Ctrl+K", () => {
     generateLabReportPdf(filePath, { testName: "Creatinine", value: "1.1", unit: "mg/dL", referenceRange: "0.6-1.2" });
     await page.locator('input[type="file"]').first().setInputFiles(filePath);
     await expect(page.getByText(/reviewed$/)).toBeVisible({ timeout: 20_000 });
-    const reviewButtons = page.locator(".field-review-actions").getByRole("button", { name: "Confirm" });
-    const fieldCount = await reviewButtons.count();
-    for (let i = 0; i < fieldCount; i += 1) await reviewButtons.nth(i).click();
+    // The upload moves to the document's own route; let that navigation land
+    // (in dev it compiles on first visit) before using the review screen.
+    await expect(page).toHaveURL(/\/workspace\/documents\/[0-9a-f]{32}/, { timeout: 30_000 });
+    await expect(page.getByText(/reviewed$/)).toBeVisible({ timeout: 20_000 });
+    // Confirm the clearly read values in one step (behind a dialog), then
+    // decide anything left individually: every value needs a decision.
+    await page.getByRole("button", { name: /Confirm clearly read values/ }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: /^Confirm \d+ values?$/ }).click();
+    const remaining = page.locator(".field-review-actions").getByRole("button", { name: "Confirm", exact: true });
+    for (let guard = 0; guard < 50 && (await remaining.count()) > 0; guard += 1) await remaining.first().click();
     await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Confirm reviewed items" }).click();
     await expect(page.locator(".eyebrow", { hasText: "CONFIRMED" })).toBeVisible({ timeout: 15_000 });
@@ -96,10 +103,7 @@ test.describe("Global search — Cmd/Ctrl+K", () => {
     });
     await page.locator(".imaging-upload-label input[type=file]").setInputFiles(reportPath);
     await expect(page.getByText(/sections reviewed/)).toBeVisible({ timeout: 20_000 });
-    const textareas = page.locator(".imaging-section-block textarea");
-    const count = await textareas.count();
-    for (let i = 0; i < count; i += 1) await textareas.nth(i).click();
-    await page.getByRole("button", { name: "Confirm reviewed sections" }).click();
+    await confirmRemainingImagingSections(page);
     await expect(page.locator(".lab-verified")).toContainText("Verified");
 
     await page.keyboard.press("Control+k");

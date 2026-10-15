@@ -1,13 +1,25 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { E2E_OWNER_FILE } from "./auth-paths";
 
 /** The sidebar's "Imaging" nav button — scoped to <aside> because several
  * in-view "back to Imaging" buttons also render the bare text "Imaging". */
 export function sidebarImagingNav(page: Page) {
   return page.locator("aside").getByRole("button", { name: "Imaging", exact: true });
+}
+
+/** Confirms every imaging report section still awaiting a decision, one at
+ * a time (each decision is saved before the next button is clicked). */
+export async function confirmRemainingImagingSections(page: Page) {
+  const confirmButtons = page.locator(".imaging-section-block").getByRole("button", { name: "Confirm", exact: true });
+  for (let guard = 0; guard < 20; guard += 1) {
+    const remaining = await confirmButtons.count();
+    if (remaining === 0) return;
+    await confirmButtons.first().click();
+    await expect(confirmButtons).toHaveCount(remaining - 1);
+  }
 }
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");

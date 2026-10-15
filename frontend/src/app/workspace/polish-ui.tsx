@@ -342,7 +342,7 @@ export function LoadState<T>({
 // it just gives that language a typed, reusable component surface.
 // --------------------------------------------------------------------------
 
-export type ButtonVariant = "primary" | "secondary" | "destructive";
+export type ButtonVariant = "primary" | "secondary" | "accent" | "ghost" | "destructive";
 
 export function Button({
   variant = "secondary",
@@ -355,7 +355,13 @@ export function Button({
   icon?: LucideIcon;
   children?: ReactNode;
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children">) {
-  const base = variant === "primary" ? "forest-button" : variant === "destructive" ? "quiet-button destructive-confirm" : "quiet-button";
+  const base = {
+    primary: "forest-button",
+    secondary: "quiet-button",
+    accent: "accent-button",
+    ghost: "ghost-button",
+    destructive: "quiet-button destructive-confirm",
+  }[variant];
   return (
     <button type="button" className={`${base} ${className}`.trim()} {...rest}>
       {Icon ? <Icon size={15} /> : null}

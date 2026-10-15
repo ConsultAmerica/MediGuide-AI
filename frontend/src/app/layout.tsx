@@ -1,21 +1,22 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans, Source_Serif_4 } from "next/font/google";
+import { Instrument_Serif, Manrope } from "next/font/google";
 import "./globals.css";
 
-const landingSans = Plus_Jakarta_Sans({
+// Interface face for everything functional: navigation, forms, tables,
+// values. Variable names are kept so existing stylesheets pick it up.
+const landingSans = Manrope({
   variable: "--font-landing-sans",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700", "800"],
 });
 
-const landingSerif = Source_Serif_4({
+// Editorial serif, used selectively for marketing headlines only. Preloaded
+// because the homepage hero headline (the LCP element) is set in it.
+const landingSerif = Instrument_Serif({
   variable: "--font-landing-serif",
   subsets: ["latin"],
-  weight: ["400", "600", "700"],
+  weight: ["400"],
   style: ["normal", "italic"],
-  // Accent face only: not preloaded, so it never competes with the body
-  // font that renders the largest text (LCP). It still swaps in once loaded.
-  preload: false,
 });
 
 const DESCRIPTION =

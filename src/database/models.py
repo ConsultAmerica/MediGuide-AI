@@ -153,11 +153,18 @@ class ExtractedField(Base):
     extraction_method: Mapped[str] = mapped_column(String(32), default="")
     user_edited: Mapped[bool] = mapped_column(Boolean, default=False)
     user_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Reserved for Document Intelligence V2 source highlighting.
+    # Source region on the page (same coordinate space as the page's
+    # width/height in the review session), when real positions exist.
     bbox_x: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     bbox_y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     bbox_width: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     bbox_height: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Audit trail (migration 009): flag as printed, what extraction
+    # originally produced (JSON), the reviewer's decision and its time.
+    flag: Mapped[str] = mapped_column(String(8), default="", server_default="")
+    extracted_snapshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    review_status: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -239,6 +246,8 @@ class LabObservation(Base):
     reference_high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     reference_text: Mapped[str] = mapped_column(String(128), default="")
     report_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
+    # Which confirmed date report_date is: "collection" | "report" | "" (unknown).
+    date_source: Mapped[str] = mapped_column(String(16), default="")
     verification_state: Mapped[str] = mapped_column(
         String(32), default="human_verified"
     )
@@ -288,6 +297,10 @@ class ImagingStudy(Base):
     pending_report_document_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
     )
+    # JSON: what the report itself says about the study (category, modality
+    # named, labelled date/clinician/facility...) and which details the user
+    # applied. Kept so the original prediction stays auditable.
+    report_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     verification_status: Mapped[str] = mapped_column(
         String(32), default="unverified", index=True
     )
@@ -355,11 +368,20 @@ class ImagingReportSection(Base):
     # Never overwritten on edit — same provenance discipline as ExtractedField.
     original_text: Mapped[str] = mapped_column(Text, default="")
     page_number: Mapped[int] = mapped_column(Integer, default=1)
+    # Last page the section runs onto (None for rows from before it was kept).
+    page_end: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     source_text: Mapped[str] = mapped_column(Text, default="")
+    # unverified | confirmed | rejected
     verification_status: Mapped[str] = mapped_column(
         String(32), default="unverified", index=True
     )
     extractor_version: Mapped[str] = mapped_column(String(32), default="")
+    # native_text | tesseract_ocr | vision_ocr ("" for older rows)
+    extraction_method: Mapped[str] = mapped_column(String(32), default="")
+    # JSON: {"line_start", "line_end", "regions": [{page, bbox, width, height}],
+    #        "boundary_adjusted": bool}
+    source_map: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -459,6 +481,26 @@ class MedicationRecord(Base):
     source: Mapped[str] = mapped_column(String(16), default="upload")
     filename: Mapped[str] = mapped_column(String(512), default="")
     other_visible_text: Mapped[str] = mapped_column(Text, default="")
+    # Separate label details (migration 012). Strength above is never
+    # combined with dose or directions; brand/generic only when the label
+    # says which is which.
+    brand_name: Mapped[str] = mapped_column(String(256), default="")
+    generic_name: Mapped[str] = mapped_column(String(256), default="")
+    route: Mapped[str] = mapped_column(String(128), default="")
+    dose: Mapped[str] = mapped_column(String(128), default="")
+    frequency: Mapped[str] = mapped_column(String(256), default="")
+    refills: Mapped[str] = mapped_column(String(64), default="")
+    prescriber: Mapped[str] = mapped_column(String(256), default="")
+    pharmacy: Mapped[str] = mapped_column(String(256), default="")
+    prescription_date: Mapped[str] = mapped_column(String(64), default="")
+    # Source and review audit.
+    source_session_id: Mapped[str] = mapped_column(String(64), default="")
+    entry_index: Mapped[int] = mapped_column(Integer, default=0)
+    source_page: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    text_source: Mapped[str] = mapped_column(String(16), default="")
+    extracted_snapshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    review_flags: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    acknowledged_records: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     confirmed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )

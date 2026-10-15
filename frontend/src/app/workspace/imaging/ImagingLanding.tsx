@@ -4,6 +4,7 @@ import type { ImagingSample, Modality, ModalitySummary } from "./imaging-types";
 import { MODALITY_ORDER, MODALITY_LABELS, formatStudyDate } from "./imaging-types";
 import { ImagingLandingEmptyState } from "./ImagingEmptyState";
 import * as imagingApi from "./imaging-api";
+import { PageHero } from "../_components/PageHero";
 
 const MODALITY_ICONS: Record<Modality, typeof ScanLine> = {
   xray: ScanLine,
@@ -69,24 +70,25 @@ export function ImagingLanding({
 
   return (
     <div className="workflow-view">
-      <p className="eyebrow">IMAGING</p>
-      <h2>Imaging</h2>
-      <p className="workflow-lead">
-        Organize imaging studies and understand the reports that accompany them. MediGuide displays and explains report
-        text — it does not read or diagnose the scan itself.
-      </p>
-
-      <div className="imaging-toolbar">
-        <button type="button" className="forest-button" onClick={() => setShowAddForm(true)}>
-          <Upload size={15} /> Add imaging study
-        </button>
-        <button type="button" className="quiet-button" onClick={onOpenHistory}>
-          Imaging history
-        </button>
-        <button type="button" className="quiet-button" onClick={onOpenCompare}>
-          Compare reports
-        </button>
-      </div>
+      <PageHero
+        eyebrow="Imaging"
+       
+        title="Imaging"
+        lead="Organize imaging studies and understand the reports that accompany them. MediGuide displays and explains report text — it does not read or diagnose the scan itself."
+        actions={
+          <>
+            <button type="button" className="forest-button" onClick={() => setShowAddForm(true)}>
+              <Upload size={15} /> Add imaging study
+            </button>
+            <button type="button" className="quiet-button" onClick={onOpenHistory}>
+              Imaging history
+            </button>
+            <button type="button" className="quiet-button" onClick={onOpenCompare}>
+              Compare reports
+            </button>
+          </>
+        }
+      />
 
       {samples.length > 0 ? (
         <section className="imaging-samples" aria-label="Sample reports">

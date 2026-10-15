@@ -4,7 +4,7 @@
    without editing the older stylesheets. Tokens: --mg-* in globals.css. */
 
 .product-shell {
-  background: #f3f7f4;
+  background: var(--mg-ivory);
   color: var(--mg-text);
   font-family: var(--font-landing-sans), "Plus Jakarta Sans", "Segoe UI", sans-serif;
 }
@@ -31,9 +31,6 @@
   outline-color: var(--mg-lime);
 }
 
-.product-shell .app-brand .brand-wordmark-text {
-  color: #fff;
-}
 
 .product-shell .header-context {
   color: var(--mg-text-on-band);
@@ -68,7 +65,7 @@
 
 .product-shell .local-pill span {
   background: var(--mg-lime);
-  box-shadow: 0 0 0 3px rgb(184 228 108 / 0.25);
+  box-shadow: 0 0 0 3px rgb(201 164 108 / 0.25);
 }
 
 .product-shell .app-header .icon-button,
@@ -98,12 +95,12 @@
 /* --------------------------------------------------------------- layout */
 
 .product-shell .workspace-grid {
-  grid-template-columns: 248px minmax(0, 1fr) 320px;
+  grid-template-columns: var(--mg-sidebar-w) minmax(0, 1fr) 320px;
   max-width: none;
 }
 
 .product-shell .workspace-grid.no-evidence {
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: var(--mg-sidebar-w) minmax(0, 1fr);
 }
 
 /* Pages start at the top instead of floating in the middle of the column. */
@@ -129,6 +126,23 @@
   padding: 20px 14px 18px;
 }
 
+/* Desktop: the sidebar fills its grid column and scrolls on its own, below
+   the sticky header, so navigation stays reachable on long pages. */
+@media (min-width: 801px) {
+  .product-shell .workspace-sidebar {
+    position: sticky;
+    top: var(--mg-app-header-h);
+    align-self: start;
+    width: auto;
+    min-width: 0;
+    height: calc(100dvh - var(--mg-app-header-h));
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+}
+
 .product-shell .sidebar-label {
   color: var(--mg-text-muted);
   font: 750 11px var(--sans);
@@ -152,15 +166,21 @@
 }
 
 .product-shell .nav-item:hover {
-  background: var(--mg-mint-soft);
-  color: var(--mg-forest);
+  background: var(--mg-ivory);
+  color: var(--mg-aubergine);
 }
 
+/* Active: champagne-tinted surface and an aubergine indicator bar. */
 .product-shell .nav-item.active {
   background: var(--mg-mint-soft);
-  color: var(--mg-forest);
+  color: var(--mg-aubergine);
   font-weight: 750;
-  box-shadow: inset 3px 0 0 var(--mg-teal);
+  box-shadow: inset 3px 0 0 var(--mg-aubergine);
+}
+
+.product-shell .nav-item:focus-visible {
+  outline: 3px solid var(--mg-plum);
+  outline-offset: 1px;
 }
 
 .product-shell .nav-item.active svg {
@@ -182,15 +202,15 @@
 }
 
 .product-shell .demo-nav-cta {
-  border: 1px solid #d9eebd;
-  background: #f3fbe7;
+  border: 1px solid #e7d9c4;
+  background: #f8f2ea;
   color: var(--mg-forest);
   border-radius: 999px;
   font-weight: 650;
 }
 
 .product-shell .demo-nav-cta:hover {
-  background: #e9f7d6;
+  background: #f2e9db;
 }
 
 .product-shell .sidebar-footer {
@@ -253,64 +273,101 @@
 
 /* -------------------------------------------------------------- buttons */
 
+/* One button system: primary (aubergine), secondary (outlined aubergine),
+   accent (champagne), destructive, ghost. All share height, radius, focus
+   ring, and an unmistakable disabled state (flat stone, dashed edge). */
 .product-shell .forest-button,
-.product-shell .drawer-action {
+.product-shell .drawer-action,
+.product-shell .quiet-button,
+.product-shell .accent-button,
+.product-shell .ghost-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 42px;
+  min-height: var(--mg-control-h);
   padding: 0 20px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: var(--mg-teal);
+  font: 650 14px var(--sans);
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s, transform 0.2s;
+}
+
+.product-shell .forest-button,
+.product-shell .drawer-action {
+  background: var(--mg-aubergine);
   color: #fff;
-  font: 700 14px var(--sans);
-  transition: background-color 0.2s, transform 0.2s;
 }
 
 .product-shell .forest-button:hover:not(:disabled),
 .product-shell .drawer-action:hover:not(:disabled) {
-  background: var(--mg-teal-strong);
+  background: var(--mg-aubergine-deep);
   transform: translateY(-1px);
 }
 
-.product-shell .forest-button:disabled {
-  background: #b8cdc6;
-  color: #f4f8f6;
-  cursor: not-allowed;
-}
-
-.product-shell .drawer-action.secondary {
-  background: var(--mg-mint-soft);
-  color: var(--mg-forest);
-}
-
 .product-shell .quiet-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 40px;
-  padding: 0 16px;
-  border: 1px solid var(--mg-border-strong);
-  border-radius: 999px;
+  padding: 0 18px;
+  border-color: rgb(52 36 62 / 0.55);
   background: var(--mg-surface);
-  color: var(--mg-forest);
-  font: 650 14px var(--sans);
-  cursor: pointer;
-  transition: border-color 0.2s, background-color 0.2s, color 0.2s;
+  color: var(--mg-aubergine);
 }
 
 .product-shell .quiet-button:hover:not(:disabled) {
-  border-color: var(--mg-teal);
+  border-color: var(--mg-aubergine);
   background: var(--mg-mint-soft);
-  color: var(--mg-teal-strong);
+  color: var(--mg-aubergine-deep);
 }
 
-.product-shell .quiet-button:disabled {
-  opacity: 0.55;
+.product-shell .accent-button {
+  background: var(--mg-champagne);
+  color: var(--mg-aubergine);
+}
+
+.product-shell .accent-button:hover:not(:disabled) {
+  background: var(--mg-lime-strong);
+}
+
+.product-shell .ghost-button {
+  padding: 0 12px;
+  background: transparent;
+  color: var(--mg-aubergine);
+}
+
+.product-shell .ghost-button:hover:not(:disabled) {
+  background: var(--mg-mint-soft);
+}
+
+.product-shell .drawer-action.secondary {
+  border-color: rgb(52 36 62 / 0.55);
+  background: var(--mg-surface);
+  color: var(--mg-aubergine);
+}
+
+.product-shell .forest-button:disabled,
+.product-shell .drawer-action:disabled,
+.product-shell .quiet-button:disabled,
+.product-shell .accent-button:disabled,
+.product-shell .ghost-button:disabled {
+  border: 1px dashed var(--mg-border-strong);
+  background: var(--mg-disabled-bg);
+  color: var(--mg-disabled-text);
+  box-shadow: none;
+  opacity: 1;
   cursor: not-allowed;
+  transform: none;
+}
+
+.product-shell :is(.forest-button, .drawer-action, .quiet-button, .accent-button, .ghost-button):focus-visible {
+  outline: 3px solid var(--mg-plum);
+  outline-offset: 2px;
+}
+
+.product-shell .forest-button.destructive-confirm,
+.product-shell .quiet-button.destructive-confirm {
+  border-color: var(--mg-error) !important;
+  background: var(--mg-error) !important;
+  color: #fff;
 }
 
 /* ------------------------------------------------------- cards & panels */
@@ -424,7 +481,7 @@
 }
 
 .product-shell .ltc-band {
-  fill: rgb(200 241 227 / 0.6);
+  fill: rgb(236 220 194 / 0.6);
 }
 
 .product-shell .ltc-band-label {
@@ -433,7 +490,7 @@
 }
 
 .product-shell .ltc-grid {
-  stroke: #e3eae6;
+  stroke: #efe8de;
 }
 
 .product-shell .ltc-axis {
@@ -460,7 +517,7 @@
 }
 
 .product-shell .ltc-point:hover .ltc-hit {
-  fill: rgb(23 124 112 / 0.06);
+  fill: rgb(96 66 116 / 0.06);
 }
 
 .product-shell .ltc-dot {
@@ -476,7 +533,7 @@
 }
 
 .product-shell .ltc-point:focus-visible .ltc-hit {
-  fill: rgb(23 124 112 / 0.08);
+  fill: rgb(96 66 116 / 0.08);
   stroke: var(--mg-focus);
   stroke-width: 3;
 }
@@ -512,7 +569,7 @@
   width: 14px;
   height: 10px;
   border-radius: 3px;
-  background: rgb(200 241 227 / 0.9);
+  background: rgb(236 220 194 / 0.9);
 }
 
 /* --------------------------------------------------------------- tables */
@@ -544,7 +601,7 @@
 .product-shell .lab-table td,
 .product-shell .data-table-wrap td {
   padding: 13px 16px;
-  border-bottom: 1px solid #edf2ef;
+  border-bottom: 1px solid #f5f0ea;
   color: var(--mg-text);
 }
 
@@ -599,7 +656,7 @@
 .product-shell textarea:focus-visible,
 .product-shell select:focus-visible {
   border-color: var(--mg-teal);
-  outline: 3px solid rgb(23 124 112 / 0.25);
+  outline: 3px solid rgb(96 66 116 / 0.25);
   outline-offset: 0;
 }
 
@@ -728,7 +785,7 @@
 .product-shell .doc-page-preview {
   border-radius: 20px;
   border: 1px solid var(--mg-border);
-  background: #eef2ef;
+  background: #f5f1eb;
 }
 
 /* -------------------------------------------------------------- timeline */
@@ -852,4 +909,2114 @@
 
 .product-shell .recent-history-row .recent-history-category {
   color: var(--mg-teal);
+}
+
+/* ------------------------------------------------------------ page hero */
+
+/* Same band, gradient and lime accents as the public homepage hero. */
+.product-shell .page-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  margin: 0 0 32px;
+  padding: 40px 44px 36px;
+  border-radius: var(--mg-radius-frame);
+  color: #fff;
+  background:
+    radial-gradient(55% 90% at 88% 10%, rgb(96 66 116 / 0.75), transparent 70%),
+    radial-gradient(40% 70% at 0% 100%, rgb(201 164 108 / 0.14), transparent 70%),
+    linear-gradient(160deg, var(--mg-band) 0%, var(--mg-band-2) 100%);
+  box-shadow: var(--mg-shadow-3);
+}
+
+/* Faint leaf echo of the brand mark in the corner. */
+.product-shell .page-hero::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  right: -40px;
+  bottom: -70px;
+  width: 260px;
+  height: 260px;
+  border-radius: 0 70% 0 70%;
+  background: linear-gradient(135deg, rgb(201 164 108 / 0.16), rgb(236 220 194 / 0.04));
+  transform: rotate(-12deg);
+}
+
+.product-shell .page-hero-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.product-shell .page-hero-text {
+  min-width: 0;
+  max-width: 720px;
+}
+
+.product-shell .page-hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+  color: var(--mg-lime);
+  font: 750 12px var(--sans);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.product-shell .page-hero-eyebrow span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mg-lime);
+  box-shadow: 0 0 0 4px rgb(201 164 108 / 0.22);
+}
+
+.product-shell .workflow-view .page-hero h2,
+.product-shell .page-hero h2 {
+  margin: 0;
+  color: #fff;
+  font: 800 clamp(30px, 3.4vw, 44px) / 1.08 var(--sans);
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+}
+
+.product-shell .page-hero-accent {
+  color: var(--mg-lime);
+}
+
+.product-shell .page-hero-lead {
+  margin: 14px 0 0;
+  max-width: 620px;
+  color: var(--mg-text-on-band);
+  font: 16px / 1.6 var(--sans);
+}
+
+.product-shell .page-hero-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.product-shell .page-hero-meta > * {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.06);
+  color: var(--mg-text-on-dark);
+  font: 600 12px var(--sans);
+  white-space: nowrap;
+}
+
+.product-shell .page-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.product-shell .page-hero .forest-button {
+  background: var(--mg-lime);
+  color: var(--mg-forest);
+  box-shadow: 0 10px 24px -10px rgb(201 164 108 / 0.7);
+}
+
+.product-shell .page-hero .forest-button:hover {
+  background: var(--mg-lime-strong);
+}
+
+.product-shell .page-hero .quiet-button {
+  border-color: rgb(255 255 255 / 0.5);
+  background: transparent;
+  color: #fff;
+}
+
+.product-shell .page-hero .quiet-button:hover:not(:disabled) {
+  border-color: #fff;
+  background: rgb(255 255 255 / 0.08);
+  color: #fff;
+}
+
+/* On the band, disabled is a dashed outline with dimmed text: never mistaken for an action. */
+.product-shell .page-hero :is(.forest-button, .quiet-button):disabled {
+  border: 1px dashed rgb(255 255 255 / 0.32);
+  background: rgb(255 255 255 / 0.04);
+  color: rgb(255 255 255 / 0.5);
+  box-shadow: none;
+}
+
+.product-shell .page-hero-note {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  color: var(--mg-text-on-band);
+  font: 500 13px var(--sans);
+}
+
+.product-shell .page-hero select {
+  border-color: rgb(255 255 255 / 0.5);
+  background-color: rgb(255 255 255 / 0.95);
+  color: var(--mg-forest);
+}
+
+.product-shell .page-hero :focus-visible {
+  outline-color: var(--mg-lime);
+}
+
+@media (max-width: 800px) {
+  .product-shell .page-hero {
+    margin-bottom: 24px;
+    padding: 28px 20px 24px;
+    border-radius: var(--mg-radius-card);
+  }
+
+  .product-shell .page-hero-body {
+    flex-direction: column;
+  }
+
+  .product-shell .page-hero-meta {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+}
+
+.product-shell .page-hero .demo-pipeline-caption {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  color: var(--mg-text-on-band);
+}
+
+/* --------------------------------------------- page hero: homepage photos */
+
+.product-shell .page-hero.has-photo {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 300px;
+  padding-top: 48px;
+  padding-bottom: 44px;
+  background: var(--mg-band);
+}
+
+.product-shell .page-hero.has-photo::after {
+  display: none;
+}
+
+/* Brand scrim: dense behind the copy, opening up toward the photo. */
+.product-shell .page-hero.has-photo::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(90deg, rgb(52 36 62 / 0.96) 0%, rgb(52 36 62 / 0.86) 42%, rgb(52 36 62 / 0.45) 78%, rgb(52 36 62 / 0.5) 100%),
+    radial-gradient(40% 60% at 0% 100%, rgb(201 164 108 / 0.16), transparent 70%);
+}
+
+.product-shell .page-hero-media {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  overflow: hidden;
+}
+
+.product-shell .page-hero-slide {
+  position: absolute;
+  inset: 0;
+}
+
+.product-shell .page-hero-slide img {
+  object-fit: cover;
+  object-position: center 35%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Single photo: one slow settle, like the homepage slides. */
+  .product-shell .page-hero-slide img {
+    animation: ws-zoom 9s var(--mg-ease) both;
+  }
+
+  /* Several photos: the homepage crossfade, four 7s slots. */
+  .product-shell .page-hero-slide.is-cycling {
+    opacity: 0;
+    visibility: hidden;
+    will-change: opacity;
+    animation: ws-xfade 28s linear infinite;
+    animation-delay: calc(var(--slide) * 7s - 1s);
+  }
+
+  .product-shell .page-hero-slide.is-cycling img {
+    animation: ws-zoom-loop 28s linear infinite;
+    animation-delay: inherit;
+  }
+
+  /* Entrance, staggered by --rise-delay. */
+  .product-shell .ws-rise,
+  .product-shell .ws-rise-down,
+  .product-shell .ws-rise-left,
+  .product-shell .ws-rise-right {
+    animation: ws-rise 0.9s var(--mg-ease) both;
+    animation-delay: var(--rise-delay, 0ms);
+  }
+
+  .product-shell .ws-rise-down { animation-name: ws-rise-down; }
+  .product-shell .ws-rise-left { animation-name: ws-rise-left; }
+  .product-shell .ws-rise-right { animation-name: ws-rise-right; }
+
+  .product-shell .page-hero h2 .ws-rise {
+    display: inline-block;
+  }
+
+  /* Scroll reveal (WorkspaceReveal tags blocks as pages render). */
+  .product-shell [data-ws-reveal] {
+    opacity: 0;
+    transform: translateY(36px);
+    transition: opacity 0.7s var(--mg-ease), transform 0.85s var(--mg-ease);
+    transition-delay: var(--ws-reveal-delay, 0ms);
+  }
+
+  .product-shell [data-ws-reveal="left"] { transform: translateX(-56px); }
+  .product-shell [data-ws-reveal="right"] { transform: translateX(56px); }
+
+  .product-shell [data-ws-reveal][data-ws-in] {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ws-zoom {
+  from { transform: scale(1.12); }
+  to { transform: scale(1.02); }
+}
+
+/* Hidden outside its own window so only the visible photo is composited
+   (same fix as the homepage hero; all four layers stalled frames). */
+@keyframes ws-xfade {
+  0% { opacity: 0; visibility: visible; }
+  5% { opacity: 1; }
+  25% { opacity: 1; }
+  30% { opacity: 0; visibility: visible; }
+  30.5%, 100% { opacity: 0; visibility: hidden; }
+}
+
+@keyframes ws-zoom-loop {
+  0% { transform: scale(1.14); }
+  30% { transform: scale(1.02); }
+  100% { transform: scale(1.02); }
+}
+
+@keyframes ws-rise {
+  from { opacity: 0; transform: translateY(32px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes ws-rise-down {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes ws-rise-left {
+  from { opacity: 0; transform: translateX(-48px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes ws-rise-right {
+  from { opacity: 0; transform: translateX(48px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-shell .page-hero-slide.is-cycling:not(:first-child) {
+    display: none;
+  }
+}
+
+@media (max-width: 800px) {
+  .product-shell .page-hero.has-photo {
+    min-height: 0;
+    padding-top: 30px;
+    padding-bottom: 26px;
+  }
+
+  .product-shell .page-hero.has-photo::before {
+    background: linear-gradient(180deg, rgb(52 36 62 / 0.9) 0%, rgb(52 36 62 / 0.82) 60%, rgb(38 26 46 / 0.92) 100%);
+  }
+}
+
+/* ---------------------------------------------------- semantic status */
+
+/* Semantic colours carry meaning only (verified, needs review, failed,
+   information); never brand chrome. Chips always carry a text label. */
+.product-shell .status-chip-success,
+.product-shell .status-chip.confirmed,
+.product-shell .review-key span:first-child {
+  border-color: var(--mg-success-border);
+  background: var(--mg-success-soft);
+  color: var(--mg-success-text);
+}
+
+.product-shell .status-chip-warning,
+.product-shell .review-key span:nth-child(2) {
+  border-color: #efd7ae;
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+}
+
+.product-shell .status-chip-error,
+.product-shell .review-key span:nth-child(3) {
+  border-color: #ecc4c4;
+  background: var(--mg-error-soft);
+  color: var(--mg-error-text);
+}
+
+.product-shell .lab-verified,
+.product-shell .upload-success-hint,
+.product-shell .process-checklist li.done {
+  color: var(--mg-success-text);
+}
+
+.product-shell .process-checklist li.failed {
+  color: var(--mg-error-text);
+}
+
+.product-shell .toast-success {
+  border-color: var(--mg-success-border);
+  background: #f2f9f5;
+}
+
+/* Service dots: green means available; limited/off keep their own colours. */
+.status-dot:not(.off):not(.limited):not(.idle):not(.busy),
+.product-shell .local-pill.service-ok span {
+  background: var(--mg-success);
+  box-shadow: 0 0 0 3px rgb(47 128 95 / 0.16);
+}
+
+/* Header dot mirrors /api/health: checking, limited and down are distinct. */
+.product-shell .local-pill.service-checking span {
+  background: var(--mg-text-on-dark-muted);
+  box-shadow: none;
+}
+
+.product-shell .local-pill.service-limited span {
+  background: #d9a441;
+  box-shadow: 0 0 0 3px rgb(217 164 65 / 0.2);
+}
+
+.product-shell .local-pill.service-down span {
+  background: #e07a7a;
+  box-shadow: 0 0 0 3px rgb(224 122 122 / 0.2);
+}
+
+.status-dot.off {
+  background: var(--mg-error);
+  box-shadow: 0 0 0 3px rgb(185 71 71 / 0.16);
+}
+
+/* ------------------------------------------- compact page header (data) */
+
+/* Data-heavy pages: same brand band, about half the height, no photography. */
+.product-shell .page-hero.is-compact {
+  margin-bottom: 24px;
+  padding: 26px 32px 24px;
+  border-radius: var(--mg-radius-card);
+  box-shadow: var(--mg-shadow-2);
+}
+
+.product-shell .page-hero.is-compact::after {
+  width: 180px;
+  height: 180px;
+  right: -30px;
+  bottom: -90px;
+}
+
+.product-shell .page-hero.is-compact .page-hero-eyebrow {
+  margin-bottom: 10px;
+}
+
+.product-shell .workflow-view .page-hero.is-compact h2,
+.product-shell .page-hero.is-compact h2 {
+  font-size: clamp(26px, 2.4vw, 32px);
+  letter-spacing: -0.025em;
+}
+
+.product-shell .page-hero.is-compact .page-hero-lead {
+  margin-top: 8px;
+  font-size: 15px;
+}
+
+.product-shell .page-hero.is-compact .page-hero-actions {
+  margin-top: 18px;
+}
+
+@media (max-width: 800px) {
+  .product-shell .page-hero.is-compact {
+    padding: 22px 18px 20px;
+  }
+}
+
+/* ------------------------------------------------- document review cards */
+
+/* The printed line each value came from, for side-by-side checking. */
+.product-shell .doc-field-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 10px 0 2px;
+  color: var(--mg-text-muted);
+  font: 600 12px var(--sans);
+}
+
+.product-shell .doc-field-source code {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--mg-ivory);
+  color: var(--mg-text);
+  font: 500 12.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.product-shell .doc-field-unread {
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid #efd7ae;
+  border-radius: 10px;
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+  font: 500 13px/1.5 var(--sans);
+}
+
+.product-shell .doc-field-inputs.is-date {
+  grid-template-columns: minmax(0, 240px);
+}
+
+.product-shell .confidence-pill.confidence-could_not_read,
+.product-shell .confidence-pill.confidence-needs_review {
+  border-color: #efd7ae;
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+}
+
+/* ---------------------------------------------------- mobile header/drawer */
+
+.product-shell .mobile-search-trigger,
+.product-shell .mobile-header-controls {
+  display: none;
+}
+
+@media (max-width: 800px) {
+  .product-shell .mobile-search-trigger {
+    display: grid;
+    margin-left: auto;
+    color: #fff;
+  }
+
+  /* Same bordered treatment as the public site's menu button; 44px target. */
+  .product-shell .mobile-menu,
+  .product-shell .mobile-search-trigger {
+    width: 44px;
+    height: 44px;
+    border: 1px solid rgb(255 255 255 / 0.25);
+    border-radius: 12px;
+    color: #fff;
+  }
+
+  .product-shell .mobile-menu {
+    margin-left: 8px;
+  }
+
+  .product-shell .mobile-header-controls {
+    display: block;
+    margin-top: 8px;
+  }
+
+  .product-shell .mobile-language {
+    display: grid;
+    gap: 6px;
+    padding: 0 12px 10px;
+    color: var(--mg-text-muted);
+    font: 600 12px var(--sans);
+  }
+
+  .product-shell .mobile-language select {
+    min-height: 44px;
+    border: 1px solid var(--mg-border-strong);
+    border-radius: var(--mg-radius-control);
+    background: var(--mg-surface);
+    color: var(--mg-aubergine);
+  }
+
+  .product-shell .local-pill-row small {
+    margin-left: auto;
+    color: var(--mg-text-muted);
+    font: 500 11.5px var(--sans);
+  }
+
+  .product-shell .local-pill-row .service-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    margin: 0 4px;
+    background: var(--mg-text-muted);
+  }
+
+  .product-shell .local-pill-row.service-ok .service-dot { background: var(--mg-success); }
+  .product-shell .local-pill-row.service-limited .service-dot { background: var(--mg-warning); }
+  .product-shell .local-pill-row.service-down .service-dot { background: var(--mg-error); }
+
+  /* Touch targets: nav rows at least 44px tall on phones. */
+  .product-shell .nav-item {
+    min-height: 44px;
+  }
+}
+
+/* ----------------------------------------------------------- QA fixes */
+
+/* The sticky sidebar has a fixed height and scrolls; without this its flex
+   children shrank instead (buttons rendered ~19px tall on short windows). */
+.product-shell .workspace-sidebar > * {
+  flex-shrink: 0;
+}
+
+/* Helper text measured below AA (2.8:1 and 3.4:1); muted text token is 5.7:1+. */
+.product-shell .composer-footer span,
+.product-shell .evidence-empty,
+.product-shell .evidence-empty p {
+  color: var(--mg-text-muted);
+}
+
+.product-shell .composer-footer span {
+  font-size: 11px;
+}
+
+/* Text link in the account footer: 24px minimum target (WCAG 2.2 AA). */
+.product-shell .sidebar-account-save {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+@media (max-width: 800px) {
+  .product-shell .local-pill-row {
+    white-space: nowrap;
+  }
+
+  .product-shell .local-pill-row small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* Optional question on a confirmed document: label above a full-width box. */
+.product-shell .explain-question {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 14px;
+  color: var(--mg-text);
+  font: 650 13px var(--sans);
+}
+
+.product-shell .explain-question textarea {
+  width: 100%;
+  min-height: 84px;
+  padding: 12px 14px;
+  border: 1px solid var(--mg-border-strong);
+  border-radius: var(--mg-radius-control);
+  background: var(--mg-surface);
+  color: var(--mg-text);
+  font: 400 14px/1.5 var(--sans);
+  resize: vertical;
+}
+
+.product-shell .explain-question textarea:focus-visible {
+  outline: 3px solid rgb(113 84 111 / 0.35);
+  border-color: var(--mg-plum);
+}
+
+/* Medication details: one full-width field per detail (instructions are long). */
+.product-shell .doc-field-inputs.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Answer cards: the error/withheld title is a sans status line, not a
+   decorative serif heading; error tone uses the semantic error colour. */
+.product-shell .limited-evidence-body h3 {
+  margin: 14px 0 6px;
+  color: var(--mg-text);
+  font: 750 17px / 1.3 var(--sans);
+  letter-spacing: -0.01em;
+}
+
+.product-shell .answer-document:has(.answer-retry) {
+  border-color: #ecc4c4;
+}
+
+.product-shell .answer-document:has(.answer-retry) .limited-evidence-body h3 {
+  color: var(--mg-error-text);
+}
+
+.product-shell .answer-retry {
+  margin-top: 12px;
+}
+
+/* The legacy `.document-meta span { flex: 1 }` also stretched the status
+   chip and its dot into a long red bar in the imaging study header. */
+.product-shell .document-meta .imaging-status-chip,
+.product-shell .document-meta .imaging-status-chip > span,
+.product-shell .document-meta .lab-verified {
+  flex: none;
+}
+
+/* Neutral (nothing yet) and in-progress dots: neither is success nor error. */
+.status-dot.idle {
+  background: var(--mg-text-muted);
+  box-shadow: 0 0 0 3px rgb(102 94 107 / 0.14);
+}
+
+.status-dot.busy {
+  background: var(--mg-info);
+  box-shadow: 0 0 0 3px rgb(66 103 169 / 0.16);
+}
+
+/* Status chips on the dark band: light text, coloured dot keeps the meaning. */
+.product-shell .page-hero-meta .lab-verified,
+.product-shell .page-hero-meta .imaging-status-chip {
+  color: var(--mg-text-on-dark);
+  font: 600 12px var(--sans);
+}
+
+.product-shell .page-hero-meta .lab-verified svg {
+  color: #8fd4b3;
+}
+
+.product-shell .imaging-boundary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.product-shell .doc-review-grid.is-single-column {
+  grid-template-columns: minmax(0, 760px);
+}
+
+
+/* -------------------------------------------- extraction provenance (F3.1) */
+
+/* Sessions read by an older extractor: offer a safe re-read before review. */
+.product-shell .reread-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 20px;
+  padding: 16px 18px;
+  border: 1px solid #efd7ae;
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+}
+
+.product-shell .reread-banner strong {
+  display: block;
+  font: 750 14px var(--sans);
+}
+
+.product-shell .reread-banner p {
+  max-width: 620px;
+  margin: 4px 0 0;
+  font: 500 13px/1.5 var(--sans);
+}
+
+/* After an edit: what extraction originally produced, for audit. */
+.product-shell .doc-field-original {
+  margin: 6px 0 2px;
+  color: var(--mg-text-muted);
+  font: 600 12px var(--sans);
+}
+
+.product-shell .doc-field-original code {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--mg-ivory);
+  color: var(--mg-text);
+  font: 500 12px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  text-decoration: line-through;
+  text-decoration-color: rgb(102 94 107 / 0.5);
+}
+
+
+/* ------------------------------------------- scanning feedback (F3.2) */
+
+.product-shell .scan-quality-banner,
+.product-shell .duplicate-banner {
+  margin: 0 0 18px;
+  padding: 14px 18px;
+  border: 1px solid #efd7ae;
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+  font: 500 13px/1.5 var(--sans);
+}
+
+.product-shell .duplicate-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.product-shell .scan-quality-banner strong,
+.product-shell .duplicate-banner strong {
+  display: block;
+  font: 750 14px var(--sans);
+}
+
+.product-shell .scan-quality-banner ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.product-shell .scan-quality-banner p,
+.product-shell .duplicate-banner p {
+  margin: 4px 0 0;
+}
+
+/* How the current page was read, under the page controls. */
+.product-shell .page-read-info {
+  margin: -4px 0 12px;
+  color: var(--mg-text-muted);
+  font: 600 12px var(--sans);
+}
+
+.product-shell .page-read-info::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--mg-success);
+  vertical-align: 1px;
+}
+
+.product-shell .page-read-info.quality-fair::before { background: var(--mg-warning); }
+.product-shell .page-read-info.quality-poor::before,
+.product-shell .page-read-info.quality-unreadable::before,
+.product-shell .page-read-info.quality-none::before { background: var(--mg-error); }
+
+
+/* ------------------------------------------------ verification review (F3.3) */
+
+.product-shell .review-workspace {
+  margin-top: 8px;
+}
+
+.product-shell .review-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 4px;
+  border: 1px solid var(--mg-border);
+  border-radius: 999px;
+  background: var(--mg-surface);
+}
+
+.product-shell .review-tabs button {
+  flex: 1 1 0;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mg-text-muted);
+  font: 700 13px var(--sans);
+}
+
+.product-shell .review-tabs button.is-active {
+  background: var(--mg-aubergine);
+  color: var(--mg-text-on-dark);
+}
+
+.product-shell .review-tab-count {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  font: 700 11px var(--sans);
+}
+
+.product-shell .review-tabs button:not(.is-active) .review-tab-count {
+  background: var(--mg-mint-soft);
+  color: var(--mg-forest);
+}
+
+.product-shell .review-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+/* Narrow screens: one pane at a time; both stay mounted. */
+.product-shell .review-split[data-pane="document"] > .review-panel,
+.product-shell .review-split[data-pane="fields"] > .review-viewer {
+  display: none;
+}
+
+/* ---- source viewer */
+
+.product-shell .review-viewer {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-surface);
+}
+
+.product-shell .review-viewer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.product-shell .review-tool-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.product-shell .review-tool {
+  min-width: 36px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-control);
+  background: var(--mg-surface);
+  color: var(--mg-forest);
+  font: 700 12px var(--sans);
+}
+
+.product-shell .review-tool:hover:not(:disabled) {
+  background: var(--mg-mint-soft);
+}
+
+.product-shell .review-tool:disabled {
+  color: var(--mg-disabled-text);
+  background: var(--mg-disabled-bg);
+  cursor: not-allowed;
+}
+
+.product-shell .review-tool-label {
+  min-width: 44px;
+  padding: 0 6px;
+  color: var(--mg-text);
+  font: 700 12px var(--sans);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* A zoomable page: the canvas scrolls when the page is larger than it. */
+.product-shell .review-canvas {
+  max-height: min(78vh, 980px);
+  overflow: auto;
+  border-radius: 12px;
+  background: #ece6dd;
+  padding: 10px;
+}
+
+.product-shell .review-canvas:focus-visible {
+  outline: 3px solid var(--mg-focus);
+  outline-offset: 2px;
+}
+
+.product-shell .review-page-frame {
+  position: relative;
+  margin: 0 auto;
+}
+
+.product-shell .review-page-frame.has-size .review-page {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center;
+}
+
+.product-shell .review-page-frame:not(.has-size) .review-page {
+  position: relative;
+}
+
+.product-shell .review-page-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(29, 25, 32, 0.12);
+}
+
+.product-shell .review-page-frame:not(.has-size) .review-page-image {
+  height: auto;
+}
+
+.product-shell .review-page .auth-image-loading {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  border-radius: 4px;
+  background: #f7f3ed;
+}
+
+.product-shell .review-region {
+  position: absolute;
+  border: 2px solid var(--mg-gold-deep);
+  border-radius: 3px;
+  background: rgba(201, 164, 108, 0.22);
+  box-shadow: 0 0 0 3px rgba(201, 164, 108, 0.28);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .product-shell .review-region {
+    animation: review-region-in 0.25s var(--mg-ease) both;
+  }
+}
+
+@keyframes review-region-in {
+  from { opacity: 0; transform: scale(1.08); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.product-shell .review-viewer-note {
+  margin: 10px 2px 0;
+  color: var(--mg-text-muted);
+  font: 500 12.5px/1.45 var(--sans);
+}
+
+.product-shell .review-back-to-fields {
+  margin-top: 8px;
+}
+
+/* ---- review panel */
+
+.product-shell .review-panel {
+  min-width: 0;
+}
+
+.product-shell .review-toolbar {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-surface);
+}
+
+.product-shell .review-toolbar .review-progress {
+  margin: 0 0 6px;
+}
+
+.product-shell .review-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--mg-mint-soft);
+  overflow: hidden;
+}
+
+.product-shell .review-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--mg-aubergine);
+  transition: width 0.2s var(--mg-ease);
+}
+
+.product-shell .review-draft-status {
+  min-height: 16px;
+  margin: 6px 0 0;
+  color: var(--mg-text-muted);
+  font: 500 12px var(--sans);
+}
+
+.product-shell .review-draft-status.is-error {
+  color: var(--mg-error-text);
+}
+
+.product-shell .review-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.product-shell .review-toolbar-actions .quiet-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-control);
+  font-size: 13px;
+}
+
+.product-shell .review-toolbar-actions .quiet-button:disabled {
+  color: var(--mg-disabled-text);
+  cursor: not-allowed;
+}
+
+.product-shell .review-page-heading {
+  margin: 18px 0 8px;
+  color: var(--mg-text-muted);
+  font: 750 11px var(--sans);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.product-shell .review-field {
+  cursor: default;
+  scroll-margin: 90px 0 24px;
+}
+
+.product-shell .review-field:focus {
+  outline: none;
+}
+
+.product-shell .review-field.field-highlighted {
+  outline: 2px solid var(--mg-gold-deep);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(201, 164, 108, 0.18);
+}
+
+.product-shell .review-field.decision-rejected .doc-field-values,
+.product-shell .review-field.decision-rejected .doc-field-label strong {
+  color: var(--mg-text-muted);
+  text-decoration: line-through;
+}
+
+.product-shell .review-decision.decision-confirmed,
+.product-shell .review-decision.decision-corrected {
+  border-color: var(--mg-success-border);
+  background: var(--mg-success-soft);
+  color: var(--mg-success-text);
+}
+
+.product-shell .review-decision.decision-rejected {
+  border-color: var(--mg-border-strong);
+  background: var(--mg-disabled-bg);
+  color: var(--mg-text-muted);
+}
+
+.product-shell .doc-field-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0 0;
+}
+
+.product-shell .doc-field-values.is-date {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.product-shell .doc-field-values > div {
+  min-width: 0;
+  padding: 8px 11px;
+  border-radius: var(--mg-radius-control);
+  background: #faf7f2;
+}
+
+.product-shell .doc-field-values dt {
+  color: var(--mg-text-muted);
+  font: 650 11.5px var(--sans);
+}
+
+.product-shell .doc-field-values dd {
+  margin: 2px 0 0;
+  color: var(--mg-text);
+  font: 700 14px var(--sans);
+  overflow-wrap: anywhere;
+}
+
+.product-shell .review-edit .doc-field-inputs {
+  margin-top: 10px;
+}
+
+.product-shell .review-edit .doc-field-inputs .is-wide {
+  grid-column: 1 / -1;
+}
+
+.product-shell .review-edit-error {
+  margin: 8px 0 0;
+  color: var(--mg-error-text);
+  font: 600 12.5px var(--sans);
+}
+
+.product-shell .review-edit .forest-button {
+  min-height: 34px;
+  padding: 0 14px;
+}
+
+.product-shell .confirm-gate-note {
+  margin: 0 0 10px;
+  color: var(--mg-warning-text);
+  font: 600 13px/1.45 var(--sans);
+}
+
+/* Wide screens: page and values side by side; the page stays in view. */
+@media (min-width: 1200px) {
+  .product-shell .review-tabs,
+  .product-shell .review-back-to-fields,
+  .product-shell .review-view-on-page {
+    display: none;
+  }
+
+  .product-shell .review-split {
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  }
+
+  .product-shell .review-split[data-pane] > .review-panel,
+  .product-shell .review-split[data-pane] > .review-viewer {
+    display: block;
+  }
+
+  .product-shell .review-viewer {
+    position: sticky;
+    top: calc(var(--mg-app-header-h, 64px) + 16px);
+  }
+
+  .product-shell .review-canvas {
+    max-height: calc(100vh - var(--mg-app-header-h, 64px) - 150px);
+  }
+}
+
+@media (max-width: 340px) {
+  .product-shell .doc-field-values,
+  .product-shell .review-edit .doc-field-inputs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .product-shell .doc-field-values {
+    gap: 6px;
+  }
+
+  .product-shell .doc-field-values > div {
+    padding: 7px 8px;
+  }
+
+  .product-shell .review-viewer {
+    padding: 8px;
+  }
+
+  .product-shell .review-canvas {
+    padding: 6px;
+    max-height: 70vh;
+  }
+
+  .product-shell .review-tabs button {
+    padding: 0 8px;
+    font-size: 12.5px;
+  }
+}
+
+.product-shell .review-page-group > .review-field {
+  padding: 16px 18px;
+  margin-bottom: 10px;
+  border: 1px solid var(--mg-border);
+  border-radius: 16px;
+  background: var(--mg-surface);
+}
+
+/* ---------------------------------------------- what a timeline date is (F3.4) */
+
+.product-shell .timeline-entry-date-label {
+  display: block;
+  margin-top: 2px;
+  color: var(--mg-text-muted);
+  font: 600 11px/1.3 var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* ----------------------------------------- lab results: honest notes (F3.4) */
+
+.product-shell .lab-cell-note {
+  display: block;
+  margin-top: 3px;
+  color: var(--mg-text-muted);
+  font: 500 12px/1.4 var(--sans);
+}
+
+.product-shell .lab-cell-note.is-flagged {
+  color: var(--mg-warning-text);
+}
+
+.product-shell .lab-data-notes {
+  margin: 0 0 14px;
+  padding: 12px 16px 12px 32px;
+  border: 1px solid #efd7ae;
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+  font: 500 13px/1.5 var(--sans);
+}
+
+.product-shell .lab-data-notes li + li {
+  margin-top: 4px;
+}
+
+.product-shell .lab-chart-empty {
+  margin: 0;
+  padding: 22px;
+  color: var(--mg-text-muted);
+  font: 500 14px/1.5 var(--sans);
+  text-align: center;
+}
+
+.product-shell .lab-drawer-note {
+  margin: 8px 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--mg-radius-control);
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+  font: 600 12.5px/1.45 var(--sans);
+}
+
+.product-shell .lab-result-drawer dd code {
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.product-shell .ltc-unit {
+  font-weight: 700;
+}
+
+.product-shell .lab-table td {
+  overflow-wrap: break-word;
+  vertical-align: top;
+}
+
+/* File names have no spaces to wrap at. */
+.product-shell .lab-table td.lab-col-source {
+  overflow-wrap: anywhere;
+}
+
+.product-shell .lab-flag-inline {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .product-shell .lab-table th,
+  .product-shell .lab-table td {
+    padding: 10px 8px;
+    font-size: 13px;
+  }
+
+  /* The flag moves into the result cell, so three columns fit a phone. */
+  .product-shell .lab-table .lab-col-flag {
+    display: none;
+  }
+
+  .product-shell .lab-table .lab-flag-inline {
+    display: block;
+  }
+
+  .product-shell .lab-table th {
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+  }
+}
+
+
+/* ----------------------------------------- imaging report review (F3.5) */
+
+/* A report page with the selected section's wording outlined. */
+.product-shell .imaging-page-frame {
+  position: relative;
+  width: 100%;
+  margin: 0 auto;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 4px 14px #1d192014;
+}
+
+.product-shell .imaging-viewer-full .imaging-page-frame {
+  max-width: min(100%, 760px);
+}
+
+.product-shell .imaging-page-frame img,
+.product-shell .imaging-page-frame .auth-image-loading {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: fill;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.product-shell .imaging-source-region {
+  position: absolute;
+  border: 2px solid var(--mg-gold-deep);
+  border-radius: 3px;
+  background: rgba(201, 164, 108, 0.2);
+  box-shadow: 0 0 0 3px rgba(201, 164, 108, 0.25);
+  pointer-events: none;
+}
+
+.product-shell .imaging-viewer-note {
+  align-self: stretch;
+  margin: 10px 0 0;
+  color: var(--mg-text-muted);
+  font: 500 12.5px/1.45 var(--sans);
+  text-align: left;
+}
+
+.product-shell .imaging-page-nav {
+  flex-wrap: wrap;
+}
+
+.product-shell .imaging-page-nav .quiet-button:disabled {
+  color: var(--mg-disabled-text);
+  cursor: not-allowed;
+}
+
+/* ---- section review */
+
+.product-shell .imaging-review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.product-shell .imaging-review-head .imaging-review-progress {
+  margin: 0;
+}
+
+.product-shell .imaging-review-head .quiet-button:disabled {
+  color: var(--mg-disabled-text);
+  cursor: not-allowed;
+}
+
+.product-shell .imaging-review-help {
+  margin: 6px 0 14px;
+  color: var(--mg-text-muted);
+  font: 500 13px/1.5 var(--sans);
+}
+
+.product-shell .imaging-section-block {
+  padding: 14px 16px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-surface);
+}
+
+.product-shell .imaging-section-block.is-active {
+  outline: 2px solid var(--mg-gold-deep);
+  outline-offset: 2px;
+}
+
+.product-shell .imaging-section-block.status-rejected .imaging-original-extraction p {
+  color: var(--mg-text-muted);
+  text-decoration: line-through;
+}
+
+.product-shell .imaging-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.product-shell .imaging-section-title {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mg-forest);
+  font: 750 15px var(--sans);
+  text-align: left;
+}
+
+.product-shell .imaging-section-title:hover {
+  text-decoration: underline;
+}
+
+.product-shell .imaging-section-status.is-confirmed,
+.product-shell .imaging-section-status.is-corrected {
+  background: var(--mg-success-soft);
+  color: var(--mg-success-text);
+}
+
+.product-shell .imaging-section-status.is-rejected {
+  background: var(--mg-disabled-bg);
+  color: var(--mg-text-muted);
+}
+
+.product-shell .imaging-section-meta {
+  margin: 4px 0 10px;
+  color: var(--mg-text-muted);
+  font: 500 12px var(--sans);
+}
+
+.product-shell .imaging-method-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: var(--mg-radius-control);
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+  font: 600 12.5px/1.45 var(--sans);
+}
+
+.product-shell .imaging-original-extraction p,
+.product-shell .imaging-corrected-wording p {
+  white-space: pre-line;
+  overflow-wrap: break-word;
+}
+
+.product-shell .imaging-corrected-wording {
+  margin-bottom: 8px;
+  padding: 10px;
+  border-left: 3px solid var(--mg-success);
+  border-radius: 0 8px 8px 0;
+  background: var(--mg-success-soft);
+}
+
+.product-shell .imaging-corrected-wording small {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--mg-success-text);
+  font: 700 10px var(--sans);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.product-shell .imaging-corrected-wording p {
+  margin: 0;
+  color: var(--mg-text);
+  font: 13px/1.5 var(--sans);
+}
+
+.product-shell .imaging-section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.product-shell .imaging-section-actions .quiet-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-control);
+  font-size: 13px;
+}
+
+.product-shell .imaging-section-actions .forest-button {
+  min-height: 34px;
+  padding: 0 14px;
+}
+
+.product-shell .imaging-section-actions .quiet-button:disabled,
+.product-shell .imaging-section-actions .forest-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.product-shell .imaging-edit-error {
+  margin: 6px 0 0;
+  color: var(--mg-error-text);
+  font: 600 12.5px var(--sans);
+}
+
+/* ---- what the report says about the study */
+
+.product-shell .imaging-report-details {
+  padding: 14px 16px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-surface);
+}
+
+.product-shell .imaging-details-note {
+  margin: 0 0 8px;
+  color: var(--mg-text);
+  font: 500 13px/1.5 var(--sans);
+}
+
+.product-shell .imaging-details-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid #efd7ae;
+  border-radius: var(--mg-radius-control);
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+  font: 600 13px/1.45 var(--sans);
+}
+
+.product-shell .imaging-details-warning > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.product-shell .imaging-details-warning > span {
+  flex: 1 1 220px;
+}
+
+.product-shell .imaging-details-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.product-shell .imaging-details-list > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.product-shell .imaging-details-list dt {
+  color: var(--mg-text-muted);
+  font: 650 12px var(--sans);
+}
+
+.product-shell .imaging-details-list dd {
+  margin: 0;
+  color: var(--mg-text);
+  font: 600 13px/1.4 var(--sans);
+  overflow-wrap: break-word;
+}
+
+.product-shell .imaging-details-list small {
+  display: block;
+  color: var(--mg-text-muted);
+  font: 500 11.5px/1.4 var(--sans);
+}
+
+.product-shell .imaging-details-list .imaging-applied {
+  color: var(--mg-success-text);
+}
+
+.product-shell .imaging-detail-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--mg-forest);
+  font: 600 12px var(--sans);
+}
+
+/* ---- boundary editor */
+
+.product-shell .imaging-boundary-editor {
+  padding: 14px 16px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-surface);
+}
+
+.product-shell .imaging-boundary-lines {
+  display: grid;
+  gap: 4px;
+  max-height: 60vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.product-shell .imaging-boundary-lines li {
+  display: grid;
+  grid-template-columns: minmax(130px, 160px) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.product-shell .imaging-boundary-lines li:not(.is-none) {
+  background: #faf7f2;
+}
+
+.product-shell .imaging-boundary-page {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  color: var(--mg-text-muted);
+  font: 750 10.5px var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.product-shell .imaging-boundary-lines select {
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-control);
+  background: var(--mg-surface);
+  font: 12.5px var(--sans);
+}
+
+.product-shell .imaging-boundary-text {
+  color: var(--mg-text);
+  font: 13px/1.4 var(--sans);
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 560px) {
+  .product-shell .imaging-boundary-lines li,
+  .product-shell .imaging-details-list > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+
+/* Side by side: the report page stays in view while sections are reviewed. */
+@media (min-width: 1100px) {
+  .product-shell .imaging-detail-grid > .imaging-viewer {
+    position: sticky;
+    top: calc(var(--mg-app-header-h, 64px) + 16px);
+    max-height: calc(100vh - var(--mg-app-header-h, 64px) - 32px);
+    overflow-y: auto;
+  }
+}
+
+
+/* ---------------------------------------------- medication review (F3.6) */
+
+.product-shell .med-review-grid {
+  align-items: start;
+}
+
+.product-shell .med-source {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  .product-shell .med-source {
+    position: sticky;
+    top: calc(var(--mg-app-header-h, 64px) + 16px);
+  }
+}
+
+.product-shell .med-label-text {
+  padding: 12px 14px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-surface);
+}
+
+.product-shell .med-label-text summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mg-forest);
+  font: 700 13px var(--sans);
+  cursor: pointer;
+}
+
+.product-shell .med-label-text pre {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--mg-text);
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.product-shell .med-read-note,
+.product-shell .med-notes,
+.product-shell .med-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #efd7ae;
+  border-radius: var(--mg-radius-control);
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+  font: 600 13px/1.45 var(--sans);
+}
+
+.product-shell .med-error {
+  border-color: #e3bbb3;
+  background: var(--mg-error-soft);
+  color: var(--mg-error-text);
+}
+
+.product-shell .med-notes {
+  margin: 0 0 12px;
+  padding-left: 30px;
+}
+
+.product-shell .med-notes li + li {
+  margin-top: 4px;
+}
+
+.product-shell .med-entries {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.product-shell .med-entries > .eyebrow {
+  margin: 0;
+}
+
+.product-shell .med-review-progress {
+  margin: -6px 0 0;
+  color: var(--mg-text-muted);
+  font: 600 13px var(--sans);
+}
+
+.product-shell .med-entry {
+  padding: 16px 18px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-surface);
+}
+
+.product-shell .med-entry.is-rejected {
+  background: #faf8f5;
+}
+
+.product-shell .med-entry.is-rejected h3 {
+  color: var(--mg-text-muted);
+  text-decoration: line-through;
+}
+
+.product-shell .med-entry-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.product-shell .med-entry-head h3 {
+  margin: 0;
+  color: var(--mg-forest);
+  font: 750 18px/1.25 var(--sans);
+  overflow-wrap: anywhere;
+}
+
+.product-shell .med-entry-sub {
+  margin: 2px 0 0;
+  color: var(--mg-text-muted);
+  font: 600 12px var(--sans);
+}
+
+.product-shell .med-decision.is-confirmed {
+  background: var(--mg-success-soft);
+  color: var(--mg-success-text);
+}
+
+.product-shell .med-decision.is-rejected {
+  background: var(--mg-disabled-bg);
+  color: var(--mg-text-muted);
+}
+
+.product-shell .med-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.product-shell .med-field {
+  min-width: 0;
+  padding: 8px 11px;
+  border-radius: var(--mg-radius-control);
+  background: #faf7f2;
+}
+
+.product-shell .med-field.is-wide {
+  grid-column: 1 / -1;
+}
+
+.product-shell .med-field dt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--mg-text-muted);
+  font: 650 11.5px var(--sans);
+}
+
+.product-shell .med-field dd {
+  margin: 3px 0 0;
+}
+
+.product-shell .med-value {
+  display: block;
+  color: var(--mg-text);
+  font: 700 14px/1.4 var(--sans);
+  overflow-wrap: anywhere;
+}
+
+.product-shell .med-value.is-empty {
+  color: var(--mg-text-muted);
+  font-weight: 500;
+  font-style: italic;
+}
+
+.product-shell .med-field input,
+.product-shell .med-field textarea {
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 7px 9px;
+  border: 1px solid var(--mg-border-strong);
+  border-radius: var(--mg-radius-control);
+  background: var(--mg-surface);
+  color: var(--mg-text);
+  font: 14px var(--sans);
+}
+
+.product-shell .med-flag,
+.product-shell .med-original {
+  display: block;
+  margin-top: 3px;
+  color: var(--mg-text-muted);
+  font: 600 11.5px/1.4 var(--sans);
+}
+
+.product-shell .med-flag.is-ambiguous_directions,
+.product-shell .med-flag.is-risky_abbreviation,
+.product-shell .med-flag.is-dose_range,
+.product-shell .med-flag.is-several_strengths,
+.product-shell .med-flag.is-ai_read {
+  color: var(--mg-warning-text);
+}
+
+.product-shell .med-original {
+  color: var(--mg-gold-deep);
+}
+
+.product-shell .med-entry-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.product-shell .med-entry-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.product-shell .med-entry-buttons .quiet-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-control);
+  font-size: 13px;
+}
+
+.product-shell .med-entry-buttons .forest-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.product-shell .med-entry-done {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  color: var(--mg-success-text);
+  font: 700 13px var(--sans);
+}
+
+.product-shell .med-entry-done.is-rejected {
+  margin: 0;
+  color: var(--mg-text-muted);
+}
+
+/* Existing records naming the same medication. */
+.product-shell .med-matches {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.product-shell .med-match {
+  padding: 12px 14px;
+  border: 1px solid #efd7ae;
+  border-radius: var(--mg-radius-control);
+  background: var(--mg-warning-soft);
+  color: var(--mg-warning-text);
+}
+
+.product-shell .med-match-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font: 700 13.5px/1.4 var(--sans);
+}
+
+.product-shell .med-match-title svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.product-shell .med-match-source,
+.product-shell .med-match-note {
+  margin: 6px 0 0;
+  font: 500 12.5px/1.45 var(--sans);
+}
+
+.product-shell .med-match-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  background: var(--mg-surface);
+  color: var(--mg-text);
+  font: 13px var(--sans);
+}
+
+.product-shell .med-match-table th,
+.product-shell .med-match-table td {
+  padding: 6px 8px;
+  border: 1px solid var(--mg-border);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.product-shell .med-match-table thead th {
+  color: var(--mg-text-muted);
+  font: 700 11px var(--sans);
+}
+
+.product-shell .med-match-ack {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--mg-text);
+  font: 600 13px var(--sans);
+}
+
+/* General information, kept apart from the label's own directions. */
+.product-shell .med-education {
+  margin-top: 22px;
+  padding: 16px 18px;
+  border: 1px dashed var(--mg-border-strong);
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-surface);
+}
+
+.product-shell .med-education-note {
+  margin: 0 0 12px;
+  color: var(--mg-text-muted);
+  font: 500 13px/1.5 var(--sans);
+}
+
+.product-shell .med-records {
+  margin-top: 26px;
+}
+
+.product-shell .med-records-help {
+  margin: -6px 0 12px;
+  color: var(--mg-text-muted);
+  font: 500 13px var(--sans);
+}
+
+.product-shell .med-records ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-shell .med-records li {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--mg-border);
+  border-radius: var(--mg-radius-card);
+  background: var(--mg-surface);
+}
+
+.product-shell .med-records li > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--mg-forest);
+}
+
+.product-shell .med-records li > div {
+  min-width: 0;
+}
+
+.product-shell .med-records strong {
+  display: block;
+  color: var(--mg-text);
+  font: 700 14px var(--sans);
+  overflow-wrap: anywhere;
+}
+
+.product-shell .med-records li p {
+  margin: 3px 0 0;
+  color: var(--mg-text);
+  font: 13px/1.45 var(--sans);
+}
+
+.product-shell .med-records small {
+  display: block;
+  margin-top: 3px;
+  color: var(--mg-text-muted);
+  font: 500 12px var(--sans);
+}
+
+.product-shell .med-records .med-record-conflict,
+.product-shell .med-records .med-record-duplicate {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--mg-warning-text);
+  font: 600 12.5px/1.45 var(--sans);
+}
+
+.product-shell .med-records .med-record-conflict svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+@media (max-width: 560px) {
+  .product-shell .med-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-shell .med-entry {
+    padding: 14px;
+  }
 }

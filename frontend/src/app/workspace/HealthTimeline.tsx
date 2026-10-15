@@ -7,6 +7,7 @@ import { fetchWithTimeout } from "../../lib/api-error";
 import { useDebouncedValue } from "../../lib/useDebouncedValue";
 import { usePaginatedTimeline } from "../../lib/usePaginatedTimeline";
 import { Button, EmptyState, Input, ServiceError } from "./polish-ui";
+import { PageHero } from "./_components/PageHero";
 import { SourceEvidence, type SourceEvidenceOpenPayload } from "./_components/SourceEvidence";
 import type { TimelineCategory, TimelineEntry, TimelineFilters } from "./_state/timeline-types";
 
@@ -180,12 +181,12 @@ export function HealthTimeline({
 
   return (
     <div className="workflow-view timeline-view">
-      <p className="eyebrow">HEALTH TIMELINE</p>
-      <h2>Health Timeline</h2>
-      <p className="workflow-lead">
-        See verified information across your health records in one chronological view. Every
-        entry links back to its original source.
-      </p>
+      <PageHero
+        eyebrow="Health timeline"
+       
+        title="Health Timeline"
+        lead="See verified information across your health records in one chronological view. Every entry links back to its original source."
+      />
 
       <div className="timeline-filter-bar" role="group" aria-label="Filter timeline">
         <div className="timeline-filter-tabs" role="tablist" aria-label="Record type">
@@ -264,7 +265,10 @@ export function HealthTimeline({
                   const expanded = expandedIds.has(entry.entry_id);
                   return (
                     <li key={entry.entry_id} className="timeline-entry">
-                      <div className="timeline-entry-date">{formatEntryDate(entry.date)}</div>
+                      <div className="timeline-entry-date">
+                        {formatEntryDate(entry.date)}
+                        {entry.date && entry.date_label && <span className="timeline-entry-date-label">{entry.date_label}</span>}
+                      </div>
                       <div className="timeline-entry-body">
                         <div className="timeline-entry-category">
                           <Icon size={14} aria-hidden="true" /> {CATEGORY_LABELS[entry.category]}

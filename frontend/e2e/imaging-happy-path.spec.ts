@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 import fs from "node:fs";
-import { generateReportPdf, seedDemoImaging, sidebarImagingNav } from "./helpers";
+import { confirmRemainingImagingSections, generateReportPdf, seedDemoImaging, sidebarImagingNav } from "./helpers";
 
 const FIXTURES_DIR = path.join(__dirname, ".scratch", "fixtures");
 
@@ -57,21 +57,19 @@ test.describe("Imaging — canonical happy path", () => {
     await expect(page.getByText("Processing imaging report")).toBeVisible();
     await expect(page.getByText(/sections reviewed/)).toBeVisible({ timeout: 30_000 });
 
-    // Review report sections — focusing each textarea marks it reviewed
-    const textareas = page.locator(".imaging-section-block textarea");
-    const sectionCount = await textareas.count();
-    for (let i = 0; i < sectionCount; i += 1) {
-      await textareas.nth(i).click();
-    }
+    // Review report sections: each one gets an explicit decision, saved as
+    // it is made. Correct one; the radiologist's wording stays beside it.
+    const sectionCount = await page.locator(".imaging-section-block").count();
+    const findingsBlock = page.getByRole("group", { name: "Findings", exact: true });
+    await findingsBlock.getByRole("button", { name: "Edit" }).click();
+    await findingsBlock.locator("textarea").fill("No acute fracture. New joint effusion is noted. Corrected by reviewer.");
+    await findingsBlock.getByRole("button", { name: "Save correction" }).click();
+    await expect(findingsBlock.getByText("Original extraction")).toBeVisible();
+    await expect(findingsBlock.getByText("Corrected by reviewer.")).toBeVisible();
+
+    // Confirm the rest.
+    await confirmRemainingImagingSections(page);
     await expect(page.getByText(`${sectionCount} of ${sectionCount} sections reviewed`)).toBeVisible();
-
-    // Edit one section
-    const findingsBox = page.getByLabel("Findings");
-    await findingsBox.fill("No acute fracture. New joint effusion is noted. Corrected by reviewer.");
-    await expect(page.getByText("Original extraction")).toBeVisible();
-
-    // Confirm sections
-    await page.getByRole("button", { name: "Confirm reviewed sections" }).click();
     await expect(page.locator(".lab-verified")).toContainText("Verified");
 
     // View source page
@@ -94,7 +92,8 @@ test.describe("Imaging — canonical happy path", () => {
     const compareButtons = page.getByRole("button", { name: "Compare with another study" });
     await expect(compareButtons.last()).toBeVisible();
     await compareButtons.last().click();
-    await expect(page.getByRole("heading", { name: "Compare Imaging Reports" })).toBeVisible();
+    // First visit to the Compare route compiles it in dev; allow for that.
+    await expect(page.getByRole("heading", { name: "Compare Imaging Reports" })).toBeVisible({ timeout: 30_000 });
 
     // Later report is the freshly created + confirmed study, picked by its
     // unique body region. selectOption's {label} match requires an exact

@@ -14,7 +14,7 @@ import os
 import shutil
 import uuid
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +40,7 @@ from src.database.imaging_repository import (
     confirm_findings,
     confirm_report_sections,
     create_study,
+    decide_report_section,
     delete_study,
     derive_study_verification_status,
     get_finding,
@@ -55,11 +56,11 @@ from src.database.imaging_repository import (
     set_pending_report_document,
     set_study_report_document,
     set_study_verification_status,
+    replace_report_sections,
     upsert_findings_from_sections,
-    upsert_report_sections,
 )
 from src.auth.dependencies import not_found, require_user
-from src.database.models import ProcessingJob, User
+from src.database.models import ImagingStudy, ProcessingJob, User
 from src.database.repository import (
     add_document_page,
     create_uploaded_document,
@@ -71,7 +72,19 @@ from src.document_intelligence import retrieve_approved_evidence
 from src.image_validator import prepare_vision_image, validate_image_file
 from src.imaging_compare import compare_section_text
 from src.imaging_dicom import is_dicom_file
-from src.imaging_sections import SECTION_TYPES, split_report_sections
+from src.imaging_sections import (
+    SECTION_TYPES,
+    ReportLine,
+    SectionSpan,
+    classify_report,
+    extract_report_details,
+    find_sections,
+    lines_from_rows,
+    section_regions,
+    sections_from_ranges,
+)
+from src.labs.table_reader import Word, group_rows, rows_from_words
+from src.ocr import ocr_available, ocr_image
 from src.observability.logging import get_logger
 from src.shared.errors import MediGuideError
 from src.shared.job_runner import run_extraction_job
@@ -99,7 +112,8 @@ TEMP_DIR = Path(os.getenv("IMAGING_TEMP_DIR", str(BASE_DIR / "outputs" / "imagin
 MAX_MB = int(os.getenv("IMAGING_MAX_MB", "20"))
 MAX_PAGES = int(os.getenv("IMAGING_MAX_PAGES", "25"))
 RENDER_DPI = int(os.getenv("IMAGING_RENDER_DPI", "140"))
-PROCESSOR_VERSION = "imaging-sections-v1"
+PROCESSOR_VERSION = "imaging-sections-v2"
+OCR_RENDER_DPI = 300
 
 
 # --------------------------------------------------------------------------
@@ -125,6 +139,25 @@ class ConfirmSectionsRequest(BaseModel):
     sections: list[SectionEdit] = []
     confirm_types: list[str] = []
     reviewed: bool = False
+
+
+class SectionDecision(BaseModel):
+    decision: str
+    text: str | None = None
+
+
+class SectionBoundary(BaseModel):
+    section_type: str
+    line_start: int
+    line_end: int
+
+
+class SectionBoundariesRequest(BaseModel):
+    sections: list[SectionBoundary]
+
+
+class ApplyDetailsRequest(BaseModel):
+    fields: list[str]
 
 
 class FindingUpdate(BaseModel):
@@ -249,33 +282,125 @@ def _extract_sections_via_vision(
     }
 
 
-def _render_pages_and_native_text(
-    pdf_path: Path, pages_dir: Path
-) -> tuple[list[tuple[int, str]], int]:
-    try:
-        doc = pymupdf.open(pdf_path)
-    except Exception as error:
-        raise PermanentProcessingError(
-            "Invalid report PDF.", technical_detail=f"{type(error).__name__}: {error}"
-        ) from error
+def _ocr_lines(image: Image.Image, page_number: int) -> tuple[list[ReportLine], tuple[float, float], int]:
+    """Lines read by local Tesseract OCR, with their positions. Returns the
+    coordinate space size and the rotation applied before reading."""
+    ocr = ocr_image(image, dpi=OCR_RENDER_DPI)
+    rows = group_rows([Word(w.x0, w.y0, w.x1, w.y1, w.text, w.confidence) for w in ocr.words])
+    return lines_from_rows(rows, page_number), (ocr.width, ocr.height), ocr.rotation_applied
 
-    try:
-        if doc.page_count < 1:
-            raise PermanentProcessingError("Report PDF has no pages.")
-        if doc.page_count > MAX_PAGES:
-            raise PermanentProcessingError(f"Maximum {MAX_PAGES} pages.")
 
-        pages_dir.mkdir(parents=True, exist_ok=True)
-        results: list[tuple[int, str]] = []
-        for index, page in enumerate(doc):
-            page_number = index + 1
-            text = page.get_text("text", sort=True).strip()
-            preview = pages_dir / f"page-{page_number}.png"
-            page.get_pixmap(dpi=RENDER_DPI, alpha=False).save(str(preview))
-            results.append((page_number, text))
-        return results, doc.page_count
-    finally:
-        doc.close()
+def _read_report(
+    saved_path: Path, suffix: str, pages_dir: Path
+) -> tuple[list[ReportLine], dict[int, tuple[float, float]], dict[int, str], int]:
+    """Every line of the report in reading order, across pages.
+
+    PDF pages use their text layer; a page without one (a scan) and photo
+    uploads are read by local OCR. Nothing is sent to an outside service.
+    Returns (lines, page sizes for regions, read method per page, page count).
+    """
+    lines: list[ReportLine] = []
+    sizes: dict[int, tuple[float, float]] = {}
+    methods: dict[int, str] = {}
+    pages_dir.mkdir(parents=True, exist_ok=True)
+
+    if suffix == ".pdf":
+        try:
+            doc = pymupdf.open(saved_path)
+        except Exception as error:
+            raise PermanentProcessingError(
+                "Invalid report PDF.", technical_detail=f"{type(error).__name__}: {error}"
+            ) from error
+        try:
+            if doc.page_count < 1:
+                raise PermanentProcessingError("Report PDF has no pages.")
+            if doc.page_count > MAX_PAGES:
+                raise PermanentProcessingError(f"Maximum {MAX_PAGES} pages.")
+            for index, page in enumerate(doc):
+                page_number = index + 1
+                preview = pages_dir / f"page-{page_number}.png"
+                page.get_pixmap(dpi=RENDER_DPI, alpha=False).save(str(preview))
+                page_lines = lines_from_rows(rows_from_words(page.get_text("words")), page_number)
+                if page_lines:
+                    lines.extend(page_lines)
+                    sizes[page_number] = (page.rect.width, page.rect.height)
+                    methods[page_number] = "native_text"
+                elif ocr_available():
+                    pix = page.get_pixmap(dpi=OCR_RENDER_DPI, alpha=False)
+                    image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    page_lines, size, rotation = _ocr_lines(image, page_number)
+                    if page_lines:
+                        lines.extend(page_lines)
+                        sizes[page_number] = size
+                        methods[page_number] = "tesseract_ocr"
+                        if rotation:
+                            with Image.open(preview) as shown:
+                                shown.rotate(-rotation, expand=True).save(preview, format="PNG")
+            return lines, sizes, methods, doc.page_count
+        finally:
+            doc.close()
+
+    validation = validate_image_file(str(saved_path))
+    if not validation.valid or not validation.path:
+        raise PermanentProcessingError(validation.error or "Invalid image.")
+    preview = pages_dir / "page-1.png"
+    with Image.open(validation.path) as image:
+        upright = image.convert("RGB")
+        upright.save(preview, format="PNG")
+        if ocr_available():
+            page_lines, size, rotation = _ocr_lines(upright, 1)
+            if page_lines:
+                lines.extend(page_lines)
+                sizes[1] = size
+                methods[1] = "tesseract_ocr"
+                if rotation:
+                    upright.rotate(-rotation, expand=True).save(preview, format="PNG")
+    return lines, sizes, methods, 1
+
+
+def _section_method(span: SectionSpan, methods: dict[int, str]) -> str:
+    used = {methods.get(line.page, "") for line in span.lines}
+    return "tesseract_ocr" if "tesseract_ocr" in used else "native_text"
+
+
+def _span_payload(span: SectionSpan, sizes: dict[int, tuple[float, float]], methods: dict[int, str]) -> dict[str, Any]:
+    return {
+        "section_type": span.section_type,
+        "text": span.text,
+        "page_start": span.page_start,
+        "page_end": span.page_end,
+        "line_start": span.line_start,
+        "line_end": span.line_end,
+        "regions": section_regions(span, sizes),
+        "extraction_method": _section_method(span, methods),
+    }
+
+
+def _page_texts(span_lines: list[ReportLine]) -> list[tuple[int, str]]:
+    by_page: dict[int, list[str]] = {}
+    for line in span_lines:
+        by_page.setdefault(line.page, []).append(line.text)
+    return [(page, " ".join(texts)) for page, texts in sorted(by_page.items())]
+
+
+def _save_lines(folder: Path, lines: list[ReportLine], sizes: dict[int, tuple[float, float]], methods: dict[int, str]) -> None:
+    """The report's lines (with pages and positions) for boundary corrections."""
+    (folder / "lines.json").write_text(json.dumps({
+        "lines": [{"page": line.page, "text": line.text, "bbox": list(line.bbox) if line.bbox else None} for line in lines],
+        "sizes": {str(page): list(size) for page, size in sizes.items()},
+        "methods": {str(page): method for page, method in methods.items()},
+    }), encoding="utf-8")
+
+
+def _load_lines(folder: Path) -> tuple[list[ReportLine], dict[int, tuple[float, float]], dict[int, str]] | None:
+    path = folder / "lines.json"
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    lines = [ReportLine(int(item["page"]), str(item["text"]), tuple(item["bbox"]) if item.get("bbox") else None) for item in data.get("lines", [])]
+    sizes = {int(page): (float(size[0]), float(size[1])) for page, size in data.get("sizes", {}).items()}
+    methods = {int(page): str(method) for page, method in data.get("methods", {}).items()}
+    return lines, sizes, methods
 
 
 async def _save_report_upload(file: UploadFile, document_id: str, suffix: str) -> Path:
@@ -495,70 +620,60 @@ async def upload_report(
 
     def work(set_stage) -> dict[str, str]:
         set_stage("reading")
-
-        if suffix == ".pdf":
-            page_texts, page_count = _render_pages_and_native_text(saved_path, pages_dir)
-        else:
-            validation = validate_image_file(str(saved_path))
-            if not validation.valid or not validation.path:
-                raise PermanentProcessingError(validation.error or "Invalid image.")
-            pages_dir.mkdir(parents=True, exist_ok=True)
-            preview = pages_dir / "page-1.png"
-            with Image.open(validation.path) as image:
-                image.convert("RGB").save(preview, format="PNG")
-            page_texts = [(1, "")]
-            page_count = 1
+        lines, sizes, methods, page_count = _read_report(saved_path, suffix, pages_dir)
 
         set_stage("extracting")
-        collected: dict[str, str] = {}
-        source_page = 1
-        last_permanent: PermanentProcessingError | None = None
-        for page_number, text in page_texts:
-            native_sections = split_report_sections(text)
-            if native_sections:
-                for key, value in native_sections.items():
-                    collected.setdefault(key, value)
-                source_page = page_number
-                continue
+        spans = find_sections(lines)
+        payloads = [_span_payload(span, sizes, methods) for span in spans]
+        span_pages = {span.section_type: _page_texts(span.lines) for span in spans}
 
-            preview_path = pages_dir / f"page-{page_number}.png"
-            try:
-                vision_sections = _extract_sections_via_vision(preview_path, set_stage)
-            except PermanentProcessingError as error:
-                # Keep going for multi-page PDFs that already have some text,
-                # but never silently save an empty report for photo uploads.
-                last_permanent = error
-                vision_sections = {}
-            if vision_sections:
+        if not payloads:
+            # Last resort: the local AI vision model, page by page. Its text
+            # is flagged as AI-read and has no positions to highlight.
+            last_permanent: PermanentProcessingError | None = None
+            found: dict[str, dict[str, Any]] = {}
+            for page_number in range(1, page_count + 1):
+                preview_path = pages_dir / f"page-{page_number}.png"
+                try:
+                    vision_sections = _extract_sections_via_vision(preview_path, set_stage)
+                except PermanentProcessingError as error:
+                    last_permanent = error
+                    vision_sections = {}
                 for key, value in vision_sections.items():
-                    collected.setdefault(key, value)
-                source_page = page_number
+                    if key not in found:
+                        found[key] = {"section_type": key, "text": value, "page_start": page_number,
+                                      "page_end": page_number, "regions": [], "extraction_method": "vision_ocr"}
+                        span_pages[key] = [(page_number, value)]
+            payloads = [found[key] for key in SECTION_TYPES if key in found]
+            if not payloads:
+                if last_permanent is not None:
+                    raise last_permanent
+                raise PermanentProcessingError(
+                    "No report sections could be read from this file. Upload a "
+                    "text-based PDF, or a clear photo of the written radiology report.",
+                )
 
-        if not collected:
-            if last_permanent is not None:
-                raise last_permanent
-            raise PermanentProcessingError(
-                "No report text could be read from this file. Upload a "
-                "text-based PDF, or a clear photo of the written radiology report.",
-            )
+        all_text = "\n".join(line.text for line in lines) or "\n".join(item["text"] for item in payloads)
+        classification = classify_report(all_text, spans)
+        details = extract_report_details(lines, spans) if lines else {}
 
         set_stage("saving")
+        _save_lines(folder, lines, sizes, methods)
         with session_scope() as session:
-            for page_number, text in page_texts:
+            for page_number in range(1, page_count + 1):
                 add_document_page(
                     session,
                     document_id=document_id,
                     page_number=page_number,
                     preview_path=f"/api/imaging/studies/{study_id}/report/pages/{page_number}/preview",
-                    text_available=bool(text),
+                    text_available=page_number in methods,
                 )
             set_document_page_count(session, document_id, page_count)
-            section_rows = upsert_report_sections(
+            section_rows = replace_report_sections(
                 session,
                 study_id=study_id,
                 document_id=document_id,
-                sections=collected,
-                page_number=source_page,
+                spans=payloads,
                 extractor_version=PROCESSOR_VERSION,
             )
             upsert_findings_from_sections(
@@ -566,10 +681,19 @@ async def upload_report(
                 study_id=study_id,
                 document_id=document_id,
                 sections=section_rows,
+                page_texts=span_pages,
             )
             set_study_report_document(session, study_id, document_id)
+            study_row = session.get(ImagingStudy, study_id)
+            if study_row is not None:
+                study_row.report_details = json.dumps({
+                    "classification": classification,
+                    "details": details,
+                    "applied": {},
+                })
+                set_study_verification_status(session, study_id, "unverified")
 
-        return collected
+        return {item["section_type"]: item["text"] for item in payloads}
 
     sections = await run_in_threadpool(
         run_extraction_job,
@@ -654,6 +778,171 @@ async def confirm_sections_endpoint(
             "sections": [serialize_section(row) for row in rows],
             "verification_status": new_status,
         }
+
+
+def _owned_report(session, study_id: str, user: User) -> ImagingStudy:
+    study = get_owned_study(session, study_id, user.id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="Imaging study not found.")
+    if not study.report_document_id:
+        raise HTTPException(status_code=409, detail="No report attached to this study yet.")
+    return study
+
+
+@router.post("/studies/{study_id}/report/sections/{section_type}/decision")
+async def decide_section_endpoint(
+    study_id: str, section_type: str, request: SectionDecision, user: User = Depends(require_user)
+) -> dict[str, Any]:
+    """Confirm (optionally with a correction), reject or undo one section.
+
+    Saved immediately, so a partly reviewed report can be resumed later.
+    """
+    if request.decision not in {"confirmed", "rejected", "unverified"}:
+        raise HTTPException(status_code=422, detail="Decision must be confirmed, rejected or unverified.")
+    if request.text is not None and not request.text.strip():
+        raise HTTPException(status_code=422, detail="A corrected section can't be empty. Reject it instead.")
+    with session_scope() as session:
+        study = _owned_report(session, study_id, user)
+        row = decide_report_section(
+            session,
+            document_id=study.report_document_id,
+            section_type=section_type,
+            decision=request.decision,
+            text=request.text,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="That section isn't in this report.")
+        rows = get_report_sections(session, study.report_document_id)
+        new_status = derive_study_verification_status(rows)
+        set_study_verification_status(session, study_id, new_status)
+        return {"sections": [serialize_section(item) for item in rows], "verification_status": new_status}
+
+
+@router.get("/studies/{study_id}/report/lines")
+async def report_lines_endpoint(study_id: str, user: User = Depends(require_user)) -> dict[str, Any]:
+    """The report's lines in reading order (for correcting section boundaries)."""
+    with session_scope() as session:
+        study = _owned_report(session, study_id, user)
+        document_id = study.report_document_id
+    loaded = _load_lines(TEMP_DIR / document_id)
+    if loaded is None:
+        return {"lines": [], "adjustable": False}
+    lines, _, _ = loaded
+    return {"lines": [{"index": index, "page": line.page, "text": line.text} for index, line in enumerate(lines)], "adjustable": True}
+
+
+@router.put("/studies/{study_id}/report/sections/boundaries")
+async def adjust_boundaries_endpoint(
+    study_id: str, request: SectionBoundariesRequest, user: User = Depends(require_user)
+) -> dict[str, Any]:
+    """Re-draw section boundaries over the report's own lines.
+
+    Each section is a contiguous range of report lines, so its text is
+    always the radiologist's wording; nothing can be added. Only allowed
+    while no section has been confirmed or rejected (undo those first), and
+    every section starts unreviewed again afterwards.
+    """
+    with session_scope() as session:
+        study = _owned_report(session, study_id, user)
+        document_id = study.report_document_id
+        current = get_report_sections(session, document_id)
+        before = {
+            row.section_type: ((json.loads(row.source_map or "{}") or {}).get("line_start"), (json.loads(row.source_map or "{}") or {}).get("line_end"))
+            for row in current
+        }
+        if any(row.verification_status != "unverified" for row in current):
+            raise MediGuideError(
+                "SECTIONS_ALREADY_REVIEWED",
+                "Undo the confirmed or rejected sections before changing section boundaries.",
+                status_code=409,
+            )
+    loaded = _load_lines(TEMP_DIR / document_id)
+    if loaded is None:
+        raise MediGuideError(
+            "BOUNDARIES_NOT_ADJUSTABLE",
+            "This report was read without line positions, so its section boundaries can't be adjusted. Edit the section text instead.",
+            status_code=422,
+        )
+    lines, sizes, methods = loaded
+    types = [item.section_type for item in request.sections]
+    if not request.sections or any(t not in SECTION_TYPES for t in types) or len(set(types)) != len(types):
+        raise HTTPException(status_code=422, detail="Each section type can be used once, from the known report sections.")
+    ordered = sorted(request.sections, key=lambda item: item.line_start)
+    previous_end = -1
+    for item in ordered:
+        if item.line_start < 0 or item.line_end >= len(lines) or item.line_start > item.line_end or item.line_start <= previous_end:
+            raise HTTPException(status_code=422, detail="Section ranges must be within the report and must not overlap.")
+        previous_end = item.line_end
+    spans = sections_from_ranges(lines, [(item.section_type, item.line_start, item.line_end) for item in ordered])
+    if not spans:
+        raise HTTPException(status_code=422, detail="These boundaries leave every section empty.")
+    payloads = [_span_payload(span, sizes, methods) for span in spans]
+    for payload in payloads:
+        # Only sections whose lines actually changed count as adjusted.
+        payload["boundary_adjusted"] = before.get(payload["section_type"]) != (payload["line_start"], payload["line_end"])
+    with session_scope() as session:
+        rows = replace_report_sections(
+            session,
+            study_id=study_id,
+            document_id=document_id,
+            spans=payloads,
+            extractor_version=PROCESSOR_VERSION,
+            boundary_adjusted=True,
+        )
+        upsert_findings_from_sections(
+            session, study_id=study_id, document_id=document_id, sections=rows,
+            page_texts={span.section_type: _page_texts(span.lines) for span in spans},
+        )
+        set_study_verification_status(session, study_id, "unverified")
+        return {"sections": [serialize_section(row) for row in rows], "verification_status": "unverified"}
+
+
+_APPLICABLE_DETAILS = {
+    "modality": ("classification", "modality"),
+    "study_date": ("details", "exam_date"),
+    "body_region": ("details", "body_region"),
+    "institution": ("details", "facility"),
+    "study_description": ("details", "study_description"),
+}
+
+
+@router.post("/studies/{study_id}/report/details/apply")
+async def apply_report_details_endpoint(
+    study_id: str, request: ApplyDetailsRequest, user: User = Depends(require_user)
+) -> dict[str, Any]:
+    """Copy details the report prints onto the study, only those the user
+    picked. The report's own reading and the study's previous values are
+    both kept in report_details for audit."""
+    unknown = [name for name in request.fields if name not in _APPLICABLE_DETAILS]
+    if unknown or not request.fields:
+        raise HTTPException(status_code=422, detail="Pick details from: " + ", ".join(_APPLICABLE_DETAILS))
+    with session_scope() as session:
+        study = _owned_report(session, study_id, user)
+        stored = json.loads(study.report_details or "{}")
+        applied = stored.setdefault("applied", {})
+        for name in request.fields:
+            group, key = _APPLICABLE_DETAILS[name]
+            if group == "classification":
+                value = (stored.get("classification") or {}).get(key)
+            else:
+                value = ((stored.get("details") or {}).get(key) or {}).get("value")
+            if not value:
+                raise HTTPException(status_code=422, detail=f"The report doesn't state a {name.replace('_', ' ')}.")
+            if name == "modality" and value not in MODALITY_LABELS:
+                raise HTTPException(status_code=422, detail="That report type isn't one of the study types MediGuide organizes.")
+            previous = getattr(study, name)
+            if name == "study_date":
+                value = _parse_date(value)
+                previous = previous.isoformat() if previous else None
+            setattr(study, name, value)
+            applied[name] = {
+                "value": value.isoformat() if isinstance(value, date) else value,
+                "previous": previous,
+                "applied_at": datetime.now(timezone.utc).isoformat(),
+            }
+        study.report_details = json.dumps(stored)
+        session.flush()
+        return serialize_study(study)
 
 
 @router.get("/studies/{study_id}/findings")

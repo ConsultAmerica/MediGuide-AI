@@ -84,7 +84,7 @@ export function SignInForm() {
   return (
     <div className="signin-card">
       <Link href="/" className="signin-brand" aria-label="MediGuide home">
-        <BrandLogo variant="wordmark" />
+        <BrandLogo variant="wordmark" tone="light" className="signin-logo" />
       </Link>
 
       <h1>{registering ? (guest ? "Save your workspace" : "Create your account") : "Sign in"}</h1>

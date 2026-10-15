@@ -67,13 +67,25 @@ def _indexes(db_path: Path, table: str) -> list[str]:
         con.close()
 
 
+def _columns(db_path: Path, table: str) -> list[str]:
+    con = sqlite3.connect(db_path)
+    try:
+        return [row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()]
+    finally:
+        con.close()
+
+
 def _schema_signature(db_path: Path) -> dict[str, list[str]]:
-    """Tables plus each table's index names — a finer-grained fingerprint
-    than table names alone, since an index-only migration (e.g.
-    005_timeline_search_indexes) changes the schema without adding or
+    """Tables plus each table's index and column names — a finer-grained
+    fingerprint than table names alone, since an index-only migration (e.g.
+    005_timeline_search_indexes) or a column-only one (e.g.
+    009_extracted_field_audit) changes the schema without adding or
     removing a single table."""
     tables = _table_names(db_path)
-    return {table: sorted(_indexes(db_path, table)) for table in sorted(tables)}
+    return {
+        table: sorted(_indexes(db_path, table)) + sorted(f"col:{c}" for c in _columns(db_path, table))
+        for table in sorted(tables)
+    }
 
 
 def test_upgrade_head_creates_imaging_schema(tmp_path):

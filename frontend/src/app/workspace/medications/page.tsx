@@ -1,39 +1,29 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { Medication } from "../workspace-views";
+import { useUrlAction } from "../_state/useUrlAction";
 import { useWorkspaceContext } from "../_state/WorkspaceStateProvider";
 import { API_URL } from "../_state/workspace-shared";
 
 function MedicationsPageContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const {
-    medState, medFields, medConfirmed, medReviewChecked, setMedReviewChecked,
+    medState, medConfirmed, applyMedState,
     medInfo, medQuestion, setMedQuestion, medTypedText, setMedTypedText,
     selectedSource, setSelectedSource, medDragging, setMedDragging, medFileInput,
-    onMedDrop, updateMedField, confirmMedication, getMedicationInfo,
+    onMedDrop, getMedicationInfo,
     submitTypedMedication, loadDemoMedication, prepareVisitFromMedication,
     resetMedication, loadingStage, error,
   } = useWorkspaceContext();
 
-  useEffect(() => {
-    if (searchParams.get("action") !== "upload") return;
-    router.replace("/workspace/medications");
-    const timer = window.setTimeout(() => medFileInput.current?.click(), 300);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  useUrlAction("/workspace/medications", { upload: () => medFileInput.current?.click() }, 300);
 
   return (
     <Medication
       apiUrl={API_URL}
       medState={medState}
-      medFields={medFields}
       medConfirmed={medConfirmed}
-      medReviewChecked={medReviewChecked}
-      setMedReviewChecked={setMedReviewChecked}
+      onStateChange={applyMedState}
       medInfo={medInfo}
       medQuestion={medQuestion}
       setMedQuestion={setMedQuestion}
@@ -46,8 +36,6 @@ function MedicationsPageContent() {
       onDrop={onMedDrop}
       onDragEnter={() => setMedDragging(true)}
       onDragLeave={() => setMedDragging(false)}
-      onFieldChange={updateMedField}
-      onConfirm={() => void confirmMedication()}
       onGetInfo={() => void getMedicationInfo()}
       onSubmitTyped={() => void submitTypedMedication(medTypedText)}
       onSample={loadDemoMedication}

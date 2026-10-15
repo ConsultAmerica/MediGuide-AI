@@ -19,8 +19,8 @@ export function DocumentsView() {
     handleViewChange, onDrop, updateDocField, confirmDocument, explainDocument,
     suggestDocumentQuestions, prepareVisitFromDocument, askAboutDocument,
     exportDocumentFields, confirmedLabCodes, openLabTimeline, setConfirmResetDocument,
-    loadingStage, error, docErrorKind, addConfirmedLabsHint, retryDocumentAction,
-    processStage, processFailed, processRetry, fieldReviewState, setFieldReviewState,
+    loadingStage, error, docErrorKind, addConfirmedLabsHint, retryDocumentAction, rereadDocument,
+    processStage, processFailed, processRetry, fieldReviewState, draftStatus, setFieldDecision, undoFieldReview,
     previewZoom, setPreviewZoom, sourceBreadcrumb, setSourceBreadcrumb,
   } = useWorkspaceContext();
 
@@ -60,6 +60,7 @@ export function DocumentsView() {
       onExportFields={exportDocumentFields}
       onOpenLabs={() => openLabTimeline(confirmedLabCodes[0])}
       onReset={() => setConfirmResetDocument(true)}
+      onReread={() => void rereadDocument()}
       loading={loadingStage}
       error={error}
       errorKind={docErrorKind}
@@ -73,12 +74,14 @@ export function DocumentsView() {
       processFailed={processFailed}
       processRetry={processRetry}
       fieldReviewState={fieldReviewState}
-      setFieldReviewState={setFieldReviewState}
+      draftStatus={draftStatus}
+      onDecide={setFieldDecision}
+      onUndo={undoFieldReview}
       previewZoom={previewZoom}
       setPreviewZoom={setPreviewZoom}
       sourceBreadcrumb={sourceBreadcrumb}
       onClearBreadcrumb={() => setSourceBreadcrumb("")}
-      onBackToTimeline={() => handleViewChange("labs")}
+      onBackToSource={() => router.back()}
     />
   );
 }

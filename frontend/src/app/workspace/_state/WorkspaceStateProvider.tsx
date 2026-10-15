@@ -20,7 +20,7 @@ import {
   type ReactNode,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { DEMO_CBC_FIELDS, DEMO_MEDICATION } from "../../../lib/demo-data";
+import { DEMO_MEDICATION_LABEL_TEXT } from "../../../lib/demo-data";
 import { fetchWithTimeout, parseApiError, VISION_PROCESS_TIMEOUT_MS } from "../../../lib/api-error";
 import { mapStatusToProcessStage, type ProcessStageId, type ToastItem } from "../polish-ui";
 import {
@@ -29,6 +29,9 @@ import {
   pathToView,
   readSseEvents,
   readStoredSettings,
+  REVIEWABLE_KEYS,
+  applyReviewDraft,
+  buildReviewDraft,
   SETTINGS_STORAGE_KEY,
   suggestClinicianQuestions,
   VISIT_STORAGE_KEY,
@@ -40,6 +43,9 @@ import {
   type DocSession,
   type DocState,
   type DocUploadResult,
+  type DraftSaveStatus,
+  type FieldReviewDecision,
+  type ReviewablePatch,
   type HealthResponse,
   type LabPoint,
   type LabTest,
@@ -111,7 +117,12 @@ function useWorkspaceState() {
   const [confirmResetDocument, setConfirmResetDocument] = useState(false);
   const [sourceBreadcrumb, setSourceBreadcrumb] = useState("");
   const [previewZoom, setPreviewZoom] = useState(1);
-  const [fieldReviewState, setFieldReviewState] = useState<Record<string, "unverified" | "confirmed" | "corrected" | "rejected">>({});
+  const [fieldReviewState, setFieldReviewState] = useState<Record<string, FieldReviewDecision>>({});
+  // The extraction exactly as the server read it, so a correction can be
+  // compared with (and undone back to) what was on the page.
+  const [docOriginalFields, setDocOriginalFields] = useState<DocField[]>([]);
+  const [draftStatus, setDraftStatus] = useState<DraftSaveStatus>("idle");
+  const lastSavedDraft = useRef("");
   const [labTests, setLabTests] = useState<LabTest[]>([]);
   const [selectedLabCode, setSelectedLabCode] = useState("hemoglobin_a1c");
   const [labPoints, setLabPoints] = useState<LabPoint[]>([]);
@@ -135,6 +146,30 @@ function useWorkspaceState() {
   }
 
   useEffect(() => { void checkHealth(); }, []);
+  // Autosave the in-progress review (debounced) so it can be resumed later.
+  const draftDocumentId = docState?.document_id;
+  useEffect(() => {
+    if (!draftDocumentId || docConfirmed || !docOriginalFields.length) return;
+    const items = buildReviewDraft(docFields, docOriginalFields, fieldReviewState);
+    const body = JSON.stringify(items);
+    if (body === lastSavedDraft.current) return;
+    const timer = window.setTimeout(async () => {
+      setDraftStatus("saving");
+      try {
+        const response = await apiFetch(`${API_URL}/api/documents/v2/${draftDocumentId}/review-draft`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items }),
+        });
+        if (!response.ok) throw new Error("draft not saved");
+        lastSavedDraft.current = body;
+        setDraftStatus("saved");
+      } catch {
+        setDraftStatus("error");
+      }
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [draftDocumentId, docConfirmed, docFields, docOriginalFields, fieldReviewState]);
   useEffect(() => {
     // One-time hydration from localStorage/sessionStorage (external systems),
     // not a value derivable from props/state during render.
@@ -396,6 +431,8 @@ function useWorkspaceState() {
     setProcessFailed(false);
     setProcessStage("upload");
     setFieldReviewState({});
+    setDocOriginalFields([]);
+    setDraftStatus("idle");
     setPreviewZoom(1);
     setSourceBreadcrumb("");
 
@@ -428,14 +465,9 @@ function useWorkspaceState() {
       setLoadingStage("Reading document text...");
       setProcessStage("read");
       setDocState(processed);
-      setDocFields(processed.fields || []);
+      loadReviewSession(processed);
       setDocSelectedPage(1);
       setProcessStage("extract");
-      const initialReview: Record<string, "unverified" | "confirmed" | "corrected" | "rejected"> = {};
-      (processed.fields || []).forEach((field) => {
-        initialReview[field.field_id] = "unverified";
-      });
-      setFieldReviewState(initialReview);
       setPendingDocId(null);
       setProcessStage("review");
       setLoadingStage("");
@@ -470,13 +502,8 @@ function useWorkspaceState() {
     try {
       const processed = await processDocument(documentId);
       setDocState(processed);
-      setDocFields(processed.fields || []);
+      loadReviewSession(processed);
       setDocSelectedPage(1);
-      const initialReview: Record<string, "unverified" | "confirmed" | "corrected" | "rejected"> = {};
-      (processed.fields || []).forEach((field) => {
-        initialReview[field.field_id] = "unverified";
-      });
-      setFieldReviewState(initialReview);
       setLoadingStage("");
       setProcessStage(null);
       pushToast("Extraction complete — review required", "success");
@@ -489,6 +516,33 @@ function useWorkspaceState() {
           : "Your original file is still available. MediGuide could not finish reading its contents.",
       );
       setLoadingStage("");
+    }
+  }
+
+  // Re-reads an unconfirmed PDF with the current extraction logic (used for
+  // sessions read by an older extractor). The server refuses confirmed
+  // documents, so verified records can't be overwritten.
+  async function rereadDocument() {
+    if (!docState || docConfirmed) return;
+    setError(""); setDocErrorKind("");
+    setLoadingStage("Re-reading document with the current extraction...");
+    setProcessStage("read");
+    try {
+      const response = await fetchWithTimeout(`${API_URL}/api/documents/v2/${docState.document_id}/reextract`, { method: "POST" }, VISION_PROCESS_TIMEOUT_MS);
+      if (!response.ok) {
+        const apiError = await parseApiError(response, "MediGuide could not re-read this document.");
+        throw new Error(apiError.message);
+      }
+      const processed: DocState = await response.json();
+      setDocState(processed);
+      loadReviewSession(processed);
+      setDocSelectedPage(1);
+      pushToast("Document re-read — review required", "success");
+    } catch (err) {
+      setError(err instanceof Error && err.message !== "Failed to fetch" ? err.message : "MediGuide could not re-read this document. Your original file is still available.");
+    } finally {
+      setLoadingStage("");
+      setProcessStage(null);
     }
   }
 
@@ -507,11 +561,12 @@ function useWorkspaceState() {
         const data = (await response.json()) as DocState;
         setPendingDocId(data.document_id);
         setDocState(data);
-        setDocFields(data.fields || []);
+        loadReviewSession(data);
         setDocConfirmed(data.confirmed);
         setDocSelectedPage(pageNumber || 1);
         setDocExplain(null);
-        setSourceBreadcrumb(`Documents / ${data.filename || "Document"} / Page ${pageNumber || 1}`);
+        // Only a drill-down to a saved value's source gets a way back.
+        setSourceBreadcrumb(fieldId ? `Source of a saved value · ${data.filename || "Document"} · Page ${pageNumber || 1}` : "");
         // A stable, bookmarkable URL per document — not just "documents" —
         // so cross-links (Labs, Timeline, Ask citations, search) and page
         // refreshes land back on the same open document AND the same page/
@@ -528,9 +583,8 @@ function useWorkspaceState() {
           setLoadingStage("Reading document text...");
           const processed = await processDocument(documentId);
           setDocState(processed);
-          setDocFields(processed.fields || []);
+          loadReviewSession(processed);
           setDocSelectedPage(pageNumber || 1);
-          setSourceBreadcrumb(`Documents / ${processed.filename || "Document"} / Page ${pageNumber || 1}`);
         }
       } else if (response.status === 404) {
         setError("This document isn't available. It may have been deleted, or it belongs to a different account.");
@@ -558,8 +612,8 @@ function useWorkspaceState() {
   }
 
   function prepareVisitFromMedication() {
-    const name = medFields.find((field) => field.key === "name" || field.label.toLowerCase().includes("name"))?.value || "this medication";
-    const strength = medFields.find((field) => field.key === "strength" || field.label.toLowerCase().includes("strength"))?.value || "";
+    const name = medFields.find((field) => field.key === "medication_name" || field.key === "name")?.value || "this medication";
+    const strength = medFields.find((field) => field.key === "strength")?.value || "";
     setVisitFields({
       ...visitFields,
       "Medications as entered": [name, strength].filter(Boolean).join(" "),
@@ -586,16 +640,21 @@ function useWorkspaceState() {
 
   function exportLabPoints() {
     const rows = [
-      ["Test", "Value", "Unit", "Date", "Document", "Page", "Verification", "Change"],
+      ["Test", "Name on report", "Value", "Unit", "Printed range", "Report flag", "Date", "Date type", "Document", "Page", "Review", "Change", "Note"],
       ...labPoints.map((point) => [
         point.test_name,
+        point.original_name || point.test_name,
         point.value_text,
         point.unit,
-        point.report_date || "",
+        point.reference_range || point.reference_text || "",
+        point.source_flag || "",
+        point.date || point.collection_date || point.report_date || "",
+        point.date_source === "collection" ? "Collected" : point.date ? "Report date" : "",
         point.document_name,
         String(point.page_number),
-        point.verification_state,
+        point.review_status || point.verification_state,
         point.change_from_previous == null ? "" : String(point.change_from_previous),
+        point.duplicate_of ? `Same result as in ${point.duplicate_document_name || "another report"}` : "",
       ]),
     ];
     downloadCsv(`mediguide-${selectedLabCode}-timeline.csv`, rows);
@@ -622,7 +681,7 @@ function useWorkspaceState() {
 
   function askAboutLabs() {
     const latest = labSummary.length ? labSummary : labPoints;
-    const lines = latest.map((point) => `${point.test_name}: ${point.value_text} ${point.unit}${point.report_date ? ` (${point.report_date})` : ""}`);
+    const lines = latest.map((point) => `${point.test_name}: ${point.value_text} ${point.unit}${(point.date || point.report_date) ? ` (${point.date || point.report_date})` : ""}`);
     setQuestion(`Help me understand these verified lab observations educationally:\n\n${lines.join("\n")}`);
     handleViewChange("conversation");
   }
@@ -649,9 +708,40 @@ function useWorkspaceState() {
     }
   }
 
-  function updateDocField(fieldId: string, patch: Partial<Pick<DocField, "value" | "unit" | "reference_range">>) {
-    setDocFields((current) => current.map((field) => (field.field_id === fieldId ? { ...field, ...patch, user_edited: true } : field)));
-    setFieldReviewState((current) => ({ ...current, [fieldId]: "corrected" }));
+  function loadReviewSession(state: DocState) {
+    const { fields, review } = applyReviewDraft(state);
+    setDocOriginalFields(state.fields || []);
+    setDocFields(fields);
+    setFieldReviewState(review);
+    lastSavedDraft.current = JSON.stringify(buildReviewDraft(fields, state.fields || [], review));
+    setDraftStatus(state.review_draft_saved_at ? "saved" : "idle");
+  }
+
+  // Called when a correction is saved, not on every keystroke. Saving values
+  // that match what was extracted counts as confirming them.
+  function updateDocField(fieldId: string, patch: ReviewablePatch) {
+    const current = docFields.find((field) => field.field_id === fieldId);
+    if (!current) return;
+    const original = docOriginalFields.find((field) => field.field_id === fieldId);
+    const next = { ...current, ...patch };
+    const changed = original ? REVIEWABLE_KEYS.some((key) => next[key] !== original[key]) : true;
+    setDocFields((fields) => fields.map((field) => (field.field_id === fieldId ? { ...next, user_edited: changed || Boolean(original?.user_edited) } : field)));
+    setFieldReviewState((review) => ({ ...review, [fieldId]: changed ? "corrected" : "confirmed" }));
+  }
+
+  function setFieldDecision(fieldIds: string[], decision: "confirmed" | "rejected") {
+    setFieldReviewState((review) => {
+      const next = { ...review };
+      for (const id of fieldIds) next[id] = decision;
+      return next;
+    });
+  }
+
+  // Back to undecided, with the values as originally extracted.
+  function undoFieldReview(fieldId: string) {
+    const original = docOriginalFields.find((field) => field.field_id === fieldId);
+    if (original) setDocFields((fields) => fields.map((field) => (field.field_id === fieldId ? original : field)));
+    setFieldReviewState((review) => ({ ...review, [fieldId]: "unverified" }));
   }
 
   function openLabTimeline(testCode?: string) {
@@ -664,6 +754,8 @@ function useWorkspaceState() {
 
   async function confirmDocument() {
     if (!docState || !docReviewChecked || !docFields.length) return;
+    // Every value needs a decision; nothing is confirmed by default.
+    if (docFields.some((field) => (fieldReviewState[field.field_id] || "unverified") === "unverified")) return;
     setError(""); setDocErrorKind(""); setLoadingStage("Saving your reviewed values...");
     try {
       const response = await apiFetch(`${API_URL}/api/documents/v2/${docState.document_id}/confirm`, {
@@ -758,6 +850,7 @@ function useWorkspaceState() {
   }
 
   function resetDocument() {
+    setDocOriginalFields([]); setDraftStatus("idle"); lastSavedDraft.current = "";
     setDocState(null); setDocFields([]); setDocConfirmed(false); setDocReviewChecked(false); setDocExplain(null); setDocQuestion(""); setDocSelectedPage(1); setError(""); setDocErrorKind(""); setAddConfirmedLabsHint(""); setConfirmedLabCodes([]); setPendingDocId(null); setHighlightedFieldId(null);
   }
 
@@ -779,13 +872,13 @@ function useWorkspaceState() {
     setLoadingStage("Reading the medication label...");
     const form = new FormData(); form.append("file", file);
     try {
-      const response = await fetchWithTimeout(`${API_URL}/api/medications/v2/upload`, { method: "POST", body: form }, 60_000);
+      const response = await fetchWithTimeout(`${API_URL}/api/medications/v2/upload`, { method: "POST", body: form }, VISION_PROCESS_TIMEOUT_MS);
       if (!response.ok) {
         const apiError = await parseApiError(response, "MediGuide could not read that label.");
         throw new Error(apiError.message);
       }
       const data = await response.json();
-      setMedState(data); setMedFields(data.fields || []);
+      applyMedState(data);
     } catch (err) {
       if (!API_URL) setError(API_CONFIGURATION_MESSAGE);
       else if (err instanceof Error && err.message && err.message !== "Failed to fetch") setError(err.message);
@@ -801,13 +894,13 @@ function useWorkspaceState() {
     setMedState(null); setMedFields([]); setMedConfirmed(false); setMedReviewChecked(false); setMedInfo(null); setMedQuestion("");
     setLoadingStage("Reading the medication label text...");
     try {
-      const response = await fetchWithTimeout(`${API_URL}/api/medications/v2/text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }, 60_000);
+      const response = await fetchWithTimeout(`${API_URL}/api/medications/v2/text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }, VISION_PROCESS_TIMEOUT_MS);
       if (!response.ok) {
         const apiError = await parseApiError(response, "MediGuide could not read that label text.");
         throw new Error(apiError.message);
       }
       const data = await response.json();
-      setMedState(data); setMedFields(data.fields || []);
+      applyMedState(data);
     } catch (err) {
       if (!API_URL) setError(API_CONFIGURATION_MESSAGE);
       else if (err instanceof Error && err.message && err.message !== "Failed to fetch") setError(err.message);
@@ -815,6 +908,16 @@ function useWorkspaceState() {
     } finally {
       setLoadingStage("");
     }
+  }
+
+  // A medication session from the server: the details used elsewhere (visit
+  // prep, questions) are those of the first confirmed medication.
+  function applyMedState(state: MedState) {
+    const entries = state.entries || [];
+    const confirmedEntry = entries.find((entry) => entry.decision === "confirmed");
+    setMedState(state);
+    setMedFields(confirmedEntry?.fields || entries[0]?.fields || state.fields || []);
+    setMedConfirmed(Boolean(confirmedEntry) || (!entries.length && state.confirmed));
   }
 
   function updateMedField(key: string, value: string) {
@@ -916,23 +1019,11 @@ function useWorkspaceState() {
     else fileInput.current?.click();
   }
 
-  function loadDemoCbc() {
-    const pages = [{ page_number: 1, preview_url: "", text_available: true, extracted_field_count: DEMO_CBC_FIELDS.length }];
-    setDocState({ document_id: "demo-cbc", filename: "Sample_CBC.pdf", page_count: 1, status: "extracted", pages, fields: [...DEMO_CBC_FIELDS], confirmed: false });
-    setDocFields([...DEMO_CBC_FIELDS]); setDocConfirmed(false); setDocReviewChecked(false); setDocExplain(null); setDocQuestion(""); setDocSelectedPage(1); setAddConfirmedLabsHint(""); setError(""); setDocErrorKind("");
-    handleViewChange("documents");
-  }
-
+  // The sample label goes through the same typed-label endpoint a person
+  // would use, so it is a real, owned session that can be confirmed and
+  // explained (a client-only fixture with a fake id 404'd on confirm).
   function loadDemoMedication() {
-    const fields: MedField[] = [
-      { key: "name", label: "Medication name", value: DEMO_MEDICATION.name, confidence: "clearly_visible", source_text: DEMO_MEDICATION.name, user_edited: false },
-      { key: "strength", label: "Strength", value: DEMO_MEDICATION.strength, confidence: "clearly_visible", source_text: DEMO_MEDICATION.strength, user_edited: false },
-      { key: "instructions", label: "Instructions", value: DEMO_MEDICATION.instructions, confidence: "clearly_visible", source_text: DEMO_MEDICATION.instructions, user_edited: false },
-      { key: "warnings", label: "Warnings", value: DEMO_MEDICATION.warnings, confidence: "needs_review", source_text: DEMO_MEDICATION.warnings, user_edited: false },
-    ];
-    setMedState({ medication_id: "demo-med", source: "typed", filename: "Sample medication", preview_url: "", status: "extracted", fields, other_visible_text: "", confirmed: false });
-    setMedFields(fields); setMedConfirmed(false); setMedReviewChecked(false); setMedInfo(null); setMedQuestion(""); setError("");
-    handleViewChange("medication");
+    void submitTypedMedication(DEMO_MEDICATION_LABEL_TEXT);
   }
 
   const docEvidenceSources: Source[] = (docExplain?.sources || []).map((source) => ({ number: source.citation_number, title: source.title, publisher: source.publisher, url: source.source_url, passage: source.passage }));
@@ -970,7 +1061,7 @@ function useWorkspaceState() {
     docExplain, setDocExplain,
     docQuestion, setDocQuestion,
     documentDragging, setDocumentDragging,
-    medState, setMedState,
+    medState, setMedState, applyMedState,
     medFields, setMedFields,
     medConfirmed, setMedConfirmed,
     medReviewChecked, setMedReviewChecked,
@@ -995,6 +1086,10 @@ function useWorkspaceState() {
     sourceBreadcrumb, setSourceBreadcrumb,
     previewZoom, setPreviewZoom,
     fieldReviewState, setFieldReviewState,
+    docOriginalFields,
+    draftStatus,
+    setFieldDecision,
+    undoFieldReview,
     labTests, setLabTests,
     selectedLabCode, setSelectedLabCode,
     labPoints, setLabPoints,
@@ -1017,6 +1112,7 @@ function useWorkspaceState() {
     runSyntheticDocumentDemo,
     uploadDocument,
     retryDocumentExtraction,
+    rereadDocument,
     inspectDocument,
     prepareVisitFromDocument,
     prepareVisitFromMedication,
@@ -1055,7 +1151,6 @@ function useWorkspaceState() {
     handleViewChange,
     openDocumentPage,
     retryDocumentAction,
-    loadDemoCbc,
     loadDemoMedication,
     evidenceSources,
     evidenceContext,

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from src.database.models import (
@@ -15,13 +16,17 @@ from src.database.models import (
     ProcessingJob,
 )
 from src.labs.normalization import (
+    LAB_CATALOG,
     TRACKED_LAB_CODES,
-    is_tracked_lab,
+    display_name_for,
     normalize_test_name,
     normalize_unit,
-    parse_numeric_value,
     parse_reference_range,
+    parse_value,
+    unit_key,
 )
+
+UNREAD_LINE_LABEL = "Unread line"
 
 
 def _utcnow() -> datetime:
@@ -52,53 +57,129 @@ def _parse_report_date(raw: str | None) -> date | None:
     return None
 
 
-def _page_dates_from_fields(fields: list[dict[str, Any]]) -> dict[int, date]:
-    """Map page number → collection/report date from confirmed date fields."""
-    dates: dict[int, date] = {}
+def _bbox_columns(bbox: Any) -> dict[str, float | None]:
+    """(x0, y0, x1, y1) -> the bbox_* columns; empty when no real region."""
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return {}
+    x0, y0, x1, y1 = (float(v) for v in bbox)
+    return {"bbox_x": x0, "bbox_y": y0, "bbox_width": x1 - x0, "bbox_height": y1 - y0}
+
+
+def is_result_date_label(label: str) -> bool:
+    """A confirmed date field that dates results (not a date of birth)."""
+    text = (label or "").strip().lower()
+    return "date" in text and "birth" not in text and "dob" not in text
+
+
+def _page_dates_from_fields(fields: list[dict[str, Any]]) -> dict[int, tuple[date, str]]:
+    """Map page number -> (date, source) from confirmed date fields, where
+    source is "collection" (when the sample was taken) or "report". A
+    collection date always wins over a report date on the same page."""
+    dates: dict[int, tuple[date, str]] = {}
     for raw_field in fields:
-        label = str(raw_field.get("label") or "").strip().lower()
-        if "date" not in label:
+        label = str(raw_field.get("label") or "")
+        if not is_result_date_label(label):
             continue
         parsed = _parse_report_date(str(raw_field.get("value") or ""))
         if not parsed:
             continue
         page_number = int(raw_field.get("page_number") or 1)
-        dates[page_number] = parsed
+        source = "collection" if "collect" in label.lower() else "report"
+        current = dates.get(page_number)
+        if current and current[1] == "collection" and source != "collection":
+            continue
+        dates[page_number] = (parsed, source)
     return dates
 
 
+def _document_date(page_dates: dict[int, tuple[date, str]]) -> tuple[date | None, str]:
+    """The date for pages that print none: a collection date if any page
+    has one, otherwise a report date, otherwise none (never invented)."""
+    collection = [value for value, source in page_dates.values() if source == "collection"]
+    if collection:
+        return max(collection), "collection"
+    reported = [value for value, source in page_dates.values() if source == "report"]
+    if reported:
+        return max(reported), "report"
+    return None, ""
+
+
+def _is_measurement(raw_field: dict[str, Any], code: str) -> bool:
+    """A confirmed field that is a lab result: a known test, or a value that
+    is a number (or a printed bound like <0.5). Dates, unread lines and
+    free-text fields stay as confirmed fields only."""
+    label = str(raw_field.get("label") or "").strip()
+    value = str(raw_field.get("value") or "").strip()
+    if not label or not value or label == UNREAD_LINE_LABEL:
+        return False
+    if raw_field.get("status") == "not_applicable" or is_result_date_label(label):
+        return False
+    if code in LAB_CATALOG:
+        return True
+    parsed = parse_value(value)
+    return parsed.numeric is not None or bool(parsed.qualifier)
+
+
+def _snapshot(field: ExtractedField | None) -> dict[str, Any] | None:
+    if field is None or not field.extracted_snapshot:
+        return None
+    try:
+        data = json.loads(field.extracted_snapshot)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _serialize_observation(item: LabObservation) -> dict[str, Any]:
-    logical_field_id = item.field.field_id if item.field else item.field_id
-    confidence = item.confidence or (item.field.confidence if item.field else "")
-    extraction_method = item.extraction_method or (
-        item.field.extraction_method if item.field else ""
+    field = item.field
+    logical_field_id = field.field_id if field else item.field_id
+    confidence = item.confidence or (field.confidence if field else "")
+    extraction_method = item.extraction_method or (field.extraction_method if field else "")
+    range_status = item.range_status or (field.status if field else "unknown")
+    date_value = item.report_date.isoformat() if item.report_date else None
+    date_source = item.date_source or ("unknown" if date_value else "")
+    printed_flag = (field.flag if field and field.flag else "") or (
+        "H" if range_status == "flagged_high_on_report" else "L" if range_status == "flagged_low_on_report" else ""
     )
-    range_status = item.range_status or (item.field.status if item.field else "unknown")
-    report_date = item.report_date.isoformat() if item.report_date else None
-    source_flag = ""
-    if range_status == "flagged_high_on_report":
-        source_flag = "H"
-    elif range_status == "flagged_low_on_report":
-        source_flag = "L"
+    parsed = parse_value(item.value_text)
+    snapshot = _snapshot(field)
+    bbox = None
+    if field is not None and field.bbox_x is not None and field.bbox_width is not None:
+        bbox = [field.bbox_x, field.bbox_y, field.bbox_x + field.bbox_width, field.bbox_y + (field.bbox_height or 0)]
     return {
         "observation_id": item.id,
         "test_code": item.test_code,
         "test_name": item.test_name,
         "normalized_name": item.test_code,
+        # The name exactly as printed and confirmed, kept beside the
+        # normalized one.
+        "original_name": field.label if field else item.test_name,
         "value": item.value_numeric,
         "value_text": item.value_text,
-        "extracted_value": item.value_numeric,
-        "confirmed_value": item.value_numeric,
+        "value_qualifier": parsed.qualifier,
+        # What extraction read before review, and what the reviewer kept.
+        "extracted_value": (snapshot or {}).get("value") if snapshot else None,
+        "confirmed_value": item.value_text,
         "unit": item.unit,
+        "unit_key": unit_key(item.unit),
         "reference_low": item.reference_low,
         "reference_high": item.reference_high,
         "reference_range": item.reference_text,
         "reference_text": item.reference_text,
-        "source_flag": source_flag,
-        "collection_date": report_date,
-        "report_date": report_date,
+        "source_flag": printed_flag,
+        "date": date_value,
+        # collection | report | unknown (recorded before date sources were kept) | "" (no date)
+        "date_source": date_source,
+        "collection_date": date_value if date_source == "collection" else None,
+        "report_date": date_value if date_source != "collection" else None,
         "verification_status": item.verification_state,
         "verification_state": item.verification_state,
+        "review_status": (field.review_status if field else "") or "confirmed",
+        # Stored as UTC; SQLite hands it back without a zone, so say so.
+        "reviewed_at": (
+            (field.reviewed_at if field.reviewed_at.tzinfo else field.reviewed_at.replace(tzinfo=timezone.utc)).isoformat()
+            if field and field.reviewed_at else None
+        ),
         # Extraction confidence only (clearly_visible | needs_review | could_not_read).
         # Not a medical-correctness score.
         "confidence": confidence,
@@ -108,6 +189,8 @@ def _serialize_observation(item: LabObservation) -> dict[str, Any]:
         or (item.document.filename if item.document else ""),
         "source_page": item.page_number,
         "page_number": item.page_number,
+        "source_text": field.source_text if field else "",
+        "source_bbox": bbox,
         "field_id": logical_field_id,
         "extraction_method": extraction_method or "",
         "preview_path": (
@@ -345,8 +428,8 @@ def upsert_confirmed_document(
     session.flush()
 
     page_dates = _page_dates_from_fields(fields)
-    fallback_date = parsed_date or (max(page_dates.values()) if page_dates else None)
-    if fallback_date and not document.report_date:
+    fallback_date, fallback_source = _document_date(page_dates)
+    if fallback_date:
         document.report_date = fallback_date
 
     for raw_field in fields:
@@ -377,29 +460,40 @@ def upsert_confirmed_document(
             extraction_method=str(raw_field.get("extraction_method") or ""),
             user_edited=bool(raw_field.get("user_edited")),
             user_confirmed=True,
+            # Audit trail: printed flag, source region, what extraction
+            # originally read (kept even after a correction) and the decision.
+            flag=str(raw_field.get("flag") or "")[:8],
+            extracted_snapshot=json.dumps(raw_field["extracted"]) if raw_field.get("extracted") else None,
+            review_status="corrected" if raw_field.get("user_edited") else "confirmed",
+            reviewed_at=datetime.now(timezone.utc),
+            **_bbox_columns(raw_field.get("source_bbox")),
         )
         session.add(field)
         session.flush()
 
         code = normalize_test_name(field.label)
-        if not is_tracked_lab(code):
+        # Every confirmed result becomes an observation, not only a fixed
+        # list of tests. Dates, unread lines and free text stay fields only.
+        if not code or not _is_measurement(raw_field, code):
             continue
 
         low, high = parse_reference_range(field.reference_range)
-        observation_date = page_dates.get(page_number) or fallback_date
+        observation_date, date_source = page_dates.get(page_number) or (fallback_date, fallback_source)
         observation = LabObservation(
             document_id=document.id,
             field_id=field.id,
             page_number=page_number,
             test_code=code,
-            test_name=TRACKED_LAB_CODES.get(code, field.label),
-            value_numeric=parse_numeric_value(field.value),
+            test_name=display_name_for(code, field.label),
+            # Only a plain number is plottable; "<0.5" stays text.
+            value_numeric=parse_value(field.value).numeric,
             value_text=field.value,
             unit=field.unit,
             reference_low=low,
             reference_high=high,
             reference_text=field.reference_range,
             report_date=observation_date,
+            date_source=date_source if observation_date else "",
             verification_state="confirmed",
             confidence=field.confidence,
             extraction_method=field.extraction_method,
@@ -423,68 +517,118 @@ def _owned_observations(owner_id: str):
 
 
 def list_tracked_tests(session: Session, owner_id: str) -> list[dict[str, Any]]:
+    """Every test the owner has confirmed results for (most first by name),
+    then the core tests with no results yet, so the selector is never empty."""
     rows = session.execute(
-        select(
-            LabObservation.test_code,
-            LabObservation.test_name,
-        )
+        select(LabObservation.test_code, LabObservation.test_name, func.count(LabObservation.id))
         .where(_owned_observations(owner_id))
-        .distinct()
+        .group_by(LabObservation.test_code, LabObservation.test_name)
     ).all()
-    present = {row.test_code: row.test_name for row in rows}
-    results: list[dict[str, Any]] = []
-    for code, display in TRACKED_LAB_CODES.items():
-        count = session.execute(
-            select(LabObservation).where(
-                LabObservation.test_code == code, _owned_observations(owner_id)
-            )
-        ).scalars().all()
-        results.append(
-            {
-                "test_code": code,
-                "display_name": display,
-                "observation_count": len(count),
-                "has_data": code in present,
-            }
-        )
+    counts: dict[str, int] = {}
+    names: dict[str, str] = {}
+    for code, name, count in rows:
+        counts[code] = counts.get(code, 0) + int(count)
+        names.setdefault(code, display_name_for(code, name))
+    present = sorted(counts, key=lambda code: names[code].lower())
+    results = [
+        {"test_code": code, "display_name": names[code], "observation_count": counts[code], "has_data": True}
+        for code in present
+    ]
+    results.extend(
+        {"test_code": code, "display_name": display, "observation_count": 0, "has_data": False}
+        for code, display in TRACKED_LAB_CODES.items()
+        if code not in counts
+    )
     return results
 
 
+def _value_key(text: str) -> str:
+    return re.sub(r"\s+", "", (text or "").replace(",", "")).lower()
+
+
+def annotate_timeline(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Orders results by their date and marks what the chart may draw.
+
+    A point is plotted only when it has a date, a plain numeric value, the
+    same unit as the series and is not a repeat of another report's result.
+    Everything else stays in the list with the reason it isn't drawn: no
+    interpolation, no unit conversion, no guessing.
+    """
+    ordered = sorted(points, key=lambda point: (point["date"] is None, point["date"] or ""))
+    # Same date, same unit, same value: the same result reported twice.
+    first_seen: dict[tuple[str, str, str], dict[str, Any]] = {}
+    by_date_unit: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for point in ordered:
+        point["duplicate_of"] = None
+        point["duplicate_document_name"] = None
+        point["conflicting_values"] = []
+        if point["date"] is None:
+            continue
+        key = (point["date"], point["unit_key"], _value_key(point["value_text"]))
+        original = first_seen.get(key)
+        if original is not None:
+            point["duplicate_of"] = original["observation_id"]
+            point["duplicate_document_name"] = original["document_name"]
+        else:
+            first_seen[key] = point
+            by_date_unit.setdefault((point["date"], point["unit_key"]), []).append(point)
+    # Same date and unit but different values: shown, and called out.
+    for group in by_date_unit.values():
+        if len(group) > 1:
+            for point in group:
+                point["conflicting_values"] = [other["value_text"] for other in group if other is not point]
+
+    numeric_dated = [p for p in ordered if p["value"] is not None and p["date"] and not p["duplicate_of"]]
+    series_unit = numeric_dated[-1]["unit_key"] if numeric_dated else ""
+    previous: dict[str, Any] | None = None
+    for point in ordered:
+        if point["duplicate_of"]:
+            reason = "duplicate"
+        elif point["value"] is None:
+            reason = "qualified_value" if point["value_qualifier"] else "not_numeric"
+        elif not point["date"]:
+            reason = "no_date"
+        elif point["unit_key"] != series_unit:
+            reason = "different_unit"
+        else:
+            reason = ""
+        point["plotted"] = not reason
+        point["not_plotted_reason"] = reason or None
+        point["change_from_previous"] = None
+        point["change_direction"] = None
+        if point["plotted"]:
+            if previous is not None:
+                delta = round(float(point["value"]) - float(previous["value"]), 3)
+                point["change_from_previous"] = delta
+                point["change_direction"] = "up" if delta > 0 else "down" if delta < 0 else "unchanged"
+            previous = point
+    return ordered
+
+
 def get_timeline(session: Session, test_code: str, owner_id: str) -> list[dict[str, Any]]:
-    code = normalize_test_name(test_code)
+    code = normalize_test_name(test_code) if test_code not in LAB_CATALOG else test_code
     observations = session.execute(
         select(LabObservation)
-        .where(LabObservation.test_code == code, _owned_observations(owner_id))
+        .where(LabObservation.test_code.in_({code, test_code}), _owned_observations(owner_id))
         .options(
             selectinload(LabObservation.document),
             selectinload(LabObservation.field),
         )
         .order_by(LabObservation.report_date.asc(), LabObservation.created_at.asc())
     ).scalars().all()
-
-    points = [_serialize_observation(item) for item in observations]
-    for index, point in enumerate(points):
-        previous = points[index - 1] if index else None
-        current_value = point.get("value")
-        previous_value = previous.get("value") if previous else None
-        if isinstance(current_value, (int, float)) and isinstance(previous_value, (int, float)):
-            delta = round(float(current_value) - float(previous_value), 3)
-            point["change_from_previous"] = delta
-            point["change_direction"] = (
-                "up" if delta > 0 else "down" if delta < 0 else "unchanged"
-            )
-        else:
-            point["change_from_previous"] = None
-            point["change_direction"] = None
-    return points
+    return annotate_timeline([_serialize_observation(item) for item in observations])
 
 
 def get_latest_lab_summary(session: Session, owner_id: str) -> list[dict[str, Any]]:
+    """The latest dated, non-repeated result of each test with results."""
     summary: list[dict[str, Any]] = []
-    for code in TRACKED_LAB_CODES:
-        points = get_timeline(session, code, owner_id)
-        if points:
-            summary.append(points[-1])
+    for test in list_tracked_tests(session, owner_id):
+        if not test["has_data"]:
+            continue
+        points = get_timeline(session, test["test_code"], owner_id)
+        candidates = [p for p in points if p["date"] and not p["duplicate_of"]] or points
+        if candidates:
+            summary.append(candidates[-1])
     return summary
 
 

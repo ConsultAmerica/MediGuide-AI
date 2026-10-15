@@ -32,14 +32,18 @@ test.describe("Synthetic demo — canonical journey", () => {
     // Extraction runs (native-text PDF, no Ollama dependency) then lands on
     // the verification view with real extracted fields.
     await expect(page.getByText(/reviewed$/)).toBeVisible({ timeout: 20_000 });
+    // The upload moves to the document's own route; let that navigation land
+    // (in dev it compiles on first visit) before using the review screen.
+    await expect(page).toHaveURL(/\/workspace\/documents\/[0-9a-f]{32}/, { timeout: 30_000 });
+    await expect(page.getByText(/reviewed$/)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Hemoglobin A1C", { exact: false }).first()).toBeVisible();
 
-    // Review every field, then confirm.
-    const reviewButtons = page.locator(".field-review-actions").getByRole("button", { name: "Confirm" });
-    const fieldCount = await reviewButtons.count();
-    for (let i = 0; i < fieldCount; i += 1) {
-      await reviewButtons.nth(i).click();
-    }
+    // Confirm the clearly read values in one step (behind a dialog), then
+    // decide anything left individually: every value needs a decision.
+    await page.getByRole("button", { name: /Confirm clearly read values/ }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: /^Confirm \d+ values?$/ }).click();
+    const remaining = page.locator(".field-review-actions").getByRole("button", { name: "Confirm", exact: true });
+    for (let guard = 0; guard < 50 && (await remaining.count()) > 0; guard += 1) await remaining.first().click();
     await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Confirm reviewed items" }).click();
     await expect(page.locator(".eyebrow", { hasText: "CONFIRMED" })).toBeVisible({ timeout: 15_000 });
@@ -75,6 +79,10 @@ test.describe("Synthetic demo — canonical journey", () => {
     await page.locator('input[type="file"]').first().setInputFiles(filePath);
 
     await expect(page.getByText("Document upload failed")).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.getByText(/reviewed$/)).toBeVisible({ timeout: 20_000 });
+    // The upload moves to the document's own route; let that navigation land
+    // (in dev it compiles on first visit) before using the review screen.
+    await expect(page).toHaveURL(/\/workspace\/documents\/[0-9a-f]{32}/, { timeout: 30_000 });
     await expect(page.getByText(/reviewed$/)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Hemoglobin A1C", { exact: false }).first()).toBeVisible();
   });

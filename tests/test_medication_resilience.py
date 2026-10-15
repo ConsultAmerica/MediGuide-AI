@@ -148,12 +148,31 @@ def test_typed_text_path_gets_the_same_classification(api_client, monkeypatch):
     fake_client = _FakeClient([ConnectionError("refused")] * 5)
     monkeypatch.setattr(medication_workspace, "_ollama_client", lambda: fake_client)
 
+    # Text the local label reader can't find a medication in, so the AI
+    # fallback (and its error handling) is what runs.
     response = api_client.post(
         "/api/medications/v2/text",
-        json={"text": "Amoxicillin 500mg — take one tablet twice daily"},
+        json={"text": "please help me read the faded writing on my bottle"},
     )
 
     assert response.status_code == 503
     envelope = response.json()["error"]
     assert envelope["code"] == "AI_SERVICE_TEMPORARILY_UNAVAILABLE"
     assert envelope["retryable"] is True
+
+
+def test_readable_typed_label_is_read_locally_without_the_ai(api_client, monkeypatch):
+    import src.medication_workspace as medication_workspace
+
+    fake_client = _FakeClient([ConnectionError("refused")] * 5)
+    monkeypatch.setattr(medication_workspace, "_ollama_client", lambda: fake_client)
+
+    response = api_client.post(
+        "/api/medications/v2/text",
+        json={"text": "Amoxicillin 500mg - take one tablet twice daily"},
+    )
+
+    assert response.status_code == 200
+    assert fake_client.calls == 0
+    fields = {f["key"]: f["value"] for f in response.json()["entries"][0]["fields"]}
+    assert fields["medication_name"] == "Amoxicillin" and fields["strength"] == "500mg"

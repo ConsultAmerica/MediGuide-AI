@@ -60,11 +60,17 @@ def _ensure_sqlite_columns(engine: Engine) -> None:
     alterations = {
         "extracted_fields": [
             ("extraction_method", "VARCHAR(32) DEFAULT ''"),
+            # Audit trail (migration 009).
+            ("flag", "VARCHAR(8) DEFAULT ''"),
+            ("extracted_snapshot", "TEXT"),
+            ("review_status", "VARCHAR(16) DEFAULT ''"),
+            ("reviewed_at", "DATETIME"),
         ],
         "lab_observations": [
             ("confidence", "VARCHAR(64) DEFAULT ''"),
             ("extraction_method", "VARCHAR(32) DEFAULT ''"),
             ("range_status", "VARCHAR(64) DEFAULT 'unknown'"),
+            ("date_source", "VARCHAR(16) DEFAULT ''"),
         ],
         "processing_jobs": [
             ("retry_attempt", "INTEGER DEFAULT 0"),
@@ -73,12 +79,28 @@ def _ensure_sqlite_columns(engine: Engine) -> None:
         "imaging_studies": [
             ("pending_report_document_id", "VARCHAR(36)"),
             ("owner_id", "VARCHAR(36)"),
+            ("report_details", "TEXT"),
+        ],
+        "imaging_report_sections": [
+            ("page_end", "INTEGER"),
+            ("extraction_method", "VARCHAR(32) DEFAULT ''"),
+            ("source_map", "TEXT"),
+            ("reviewed_at", "DATETIME"),
         ],
         "documents": [
             ("owner_id", "VARCHAR(36)"),
         ],
         "medication_records": [
             ("owner_id", "VARCHAR(36)"),
+            *[(name, "VARCHAR(256) DEFAULT ''") for name in (
+                "brand_name", "generic_name", "route", "dose", "frequency", "refills",
+                "prescriber", "pharmacy", "prescription_date", "source_session_id", "text_source",
+            )],
+            ("entry_index", "INTEGER DEFAULT 0"),
+            ("source_page", "INTEGER"),
+            ("extracted_snapshot", "TEXT"),
+            ("review_flags", "TEXT"),
+            ("acknowledged_records", "TEXT"),
         ],
     }
     with engine.begin() as connection:

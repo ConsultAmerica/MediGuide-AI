@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import hashlib
 import json
 import os
@@ -15,7 +16,7 @@ import pymupdf
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from src.config import (
@@ -36,10 +37,20 @@ from src.database.repository import (
     create_uploaded_document,
     document_exists,
     get_owned_document,
+    is_result_date_label,
     owned_document_ids,
 )
 from src.database.session import session_scope
 from src.image_validator import prepare_vision_image, validate_image_file
+from src.labs.line_parser import (
+    UNREAD_LINE_LABEL,
+    ParsedMeasurement,
+    check_extracted_measurement,
+    find_result_dates,
+    looks_like_date,
+)
+from src.labs.table_reader import Row, Word, group_rows, read_page_rows, rows_from_words
+from src.ocr import OcrPage, ocr_available, ocr_image
 from src.labs.service import create_observations_from_document
 from src.observability.logging import get_logger
 from src.safety import check_for_emergency
@@ -64,6 +75,12 @@ VISION_MODEL = VISION_MODEL_NAME
 TEXT_MODEL = MODEL_NAME
 MAX_MB = int(os.getenv("DOC_INTEL_MAX_MB", "20"))
 MAX_PAGES = int(os.getenv("DOC_INTEL_MAX_PAGES", "25"))
+# 2 = position-based table reading with source regions and provenance.
+# 3 = local OCR for scans/photos, page read quality, kept originals.
+EXTRACTION_VERSION = 3
+# Scanned pages are rendered at this resolution for OCR (previews stay at
+# RENDER_DPI); ~300 dpi is where Tesseract reads small print reliably.
+OCR_RENDER_DPI = int(os.getenv("DOC_INTEL_OCR_DPI", "300"))
 RENDER_DPI = int(os.getenv("DOC_INTEL_RENDER_DPI", "140"))
 RETENTION_MINUTES = int(os.getenv("DOC_INTEL_RETENTION_MINUTES", "120"))
 
@@ -78,7 +95,9 @@ Status = Literal[
     "not_applicable",
     "unknown",
 ]
-ExtractionMethod = Literal["native_text", "vision_ocr", ""]
+# native_text: PDF text layer; tesseract_ocr: local OCR of a scan/photo;
+# vision_ocr: local AI vision model (last resort, least deterministic).
+ExtractionMethod = Literal["native_text", "tesseract_ocr", "vision_ocr", ""]
 
 
 class ExtractedField(BaseModel):
@@ -93,6 +112,25 @@ class ExtractedField(BaseModel):
     source_text: str = ""
     extraction_method: ExtractionMethod = ""
     user_edited: bool = False
+    # Provenance added in extraction v2 (absent on older sessions): the H/L
+    # flag exactly as printed; the source region on the page in PDF points
+    # (x0, y0, x1, y1), only when real coordinates exist; and what extraction
+    # originally produced, kept unchanged for audit after a reviewer edits.
+    flag: str = ""
+    source_bbox: list[float] | None = None
+    extracted: dict[str, str] | None = None
+
+
+ReviewDecision = Literal["unverified", "confirmed", "corrected", "rejected"]
+
+
+class ReviewDraftItem(BaseModel):
+    """A reviewer's in-progress decision on one field (not yet a record)."""
+    state: ReviewDecision = "unverified"
+    label: str | None = Field(default=None, max_length=256)
+    value: str | None = Field(default=None, max_length=512)
+    unit: str | None = Field(default=None, max_length=64)
+    reference_range: str | None = Field(default=None, max_length=128)
 
 
 class PageInfo(BaseModel):
@@ -100,6 +138,17 @@ class PageInfo(BaseModel):
     preview_url: str
     text_available: bool
     extracted_field_count: int
+    # Size of the coordinate space the page's source_bbox values use (PDF
+    # points for the text layer, image pixels for OCR), so a region can be
+    # placed proportionally on the preview.
+    width: float = 0
+    height: float = 0
+    # How the page was read and how readable it was. Describes the image /
+    # text layer only; it is not a measure of medical accuracy.
+    text_source: str = ""             # text_layer | ocr | vision | none
+    quality: str = ""                 # good | fair | poor | unreadable
+    quality_notes: list[str] = Field(default_factory=list)
+    ocr_confidence: float | None = None
 
 
 class DocumentState(BaseModel):
@@ -122,6 +171,19 @@ class DocumentState(BaseModel):
     retry_attempt: int = 0
     retry_max: int = 0
     safe_error_message: str = ""
+    # Which extraction logic produced `fields`. Sessions saved before the
+    # position-based reader default to 1 and may be re-read while unconfirmed.
+    extraction_version: int = 1
+    # Fingerprint of the uploaded bytes, and any already-confirmed document
+    # of the same owner with identical bytes (confirming again would chart
+    # the same results twice, so the review screen warns first).
+    content_sha256: str = ""
+    duplicate_of: dict[str, str] | None = None
+    # A partially completed review, saved so the reviewer can leave and
+    # resume. Only decisions and edits; nothing here is a medical record
+    # until the document is confirmed.
+    review_draft: dict[str, ReviewDraftItem] = Field(default_factory=dict)
+    review_draft_saved_at: str = ""
 
 
 class UploadResponse(BaseModel):
@@ -422,13 +484,27 @@ def _extract_page_fields(
         }:
             status = "unknown"
         value = str(item.get("value", "")).strip()
+        unit = str(item.get("unit", "")).strip()
         reference_range = str(item.get("reference_range", "")).strip()
-        status = _recompute_status(value, reference_range, status)
+        # Same rule as the native-text parser: report metadata, dates and
+        # reference-range fragments are not measurements. Anything the model
+        # proposes that can't be range-checked mechanically goes to review.
+        verdict = check_extracted_measurement(label, value, unit)
+        if verdict == "reject":
+            # A printed date is kept as a date (never a measurement); any
+            # other metadata or range fragment is dropped.
+            if not looks_like_date(value):
+                continue
+            unit, reference_range, status = "", "", "not_applicable"
+        elif verdict == "review" and confidence == "clearly_visible":
+            confidence = "needs_review"
+        if status != "not_applicable":
+            status = _recompute_status(value, reference_range, status)
         result.append(ExtractedField(
             field_id=_field_id(page_number, i, label),
             label=label,
             value=value,
-            unit=str(item.get("unit", "")).strip(),
+            unit=unit,
             reference_range=reference_range,
             status=status,
             confidence=confidence,
@@ -543,103 +619,186 @@ async def _save_upload_file(
     return target, total
 
 
-def _extract_native_text_fields(text: str, page_number: int) -> list[ExtractedField]:
-    """Parse structured medical lab fields directly from digital PDF text.
+def _snapshot(label: str, value: str, unit: str, reference_range: str) -> dict[str, str]:
+    """What extraction originally produced, kept for audit after edits."""
+    return {"label": label, "value": value, "unit": unit, "reference_range": reference_range}
 
-    Fast, deterministic, and does not require Ollama/GPU when clean text is present.
-    """
-    if not text:
-        return []
 
-    results: list[ExtractedField] = []
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-
-    index = 0
-    for line in lines:
-        if re.search(r"^(?:sample|page\s*\d|report\s*date|collection\s*date|patient|doctor|physician|date\b|test\s*name|component\b)", line, re.I):
-            continue
-
-        label: str = ""
-        value: str = ""
-        unit: str = ""
-        ref_range: str = ""
-
-        # Pattern 1: Label Value Unit Ref Range (e.g. "Hemoglobin 13.2 g/dL Ref 12.0-15.5")
-        m1 = re.match(
-            r"^([A-Za-z0-9\s/_\-\(\)\.]+?)\s+([<>]?\s*\d+(?:\.\d+)?)\s*([a-zA-Z0-9^/%µ\-_/]*)\s*(?:(?:Ref|Reference|Range|Ref\s*Range|Normal|Limits)[:\s]*|[\[\(])\s*([<>]?\s*\d+(?:\.\d+)?\s*(?:[-–to]+\s*\d+(?:\.\d+)?)?)[\]\)]?",
-            line,
-            re.I,
-        )
-        if m1:
-            label, value, unit, ref_range = m1.groups()
-        else:
-            # Pattern 2: Label : Value Unit (Range) (e.g. "Glucose: 98 mg/dL (70-99)")
-            m2 = re.match(
-                r"^([A-Za-z0-9\s/_\-\(\)\.]+?)\s*[:=]\s*([<>]?\s*\d+(?:\.\d+)?)\s*([a-zA-Z0-9^/%µ\-_/]*)\s*(?:[\[\(]?([<>]?\s*\d+(?:\.\d+)?\s*(?:[-–to]+\s*\d+(?:\.\d+)?)?)[\]\)]?)?",
-                line,
-                re.I,
-            )
-            if m2:
-                label, value, unit, ref_range = m2.groups()
-            else:
-                # Pattern 3: Simple Label Value Unit (e.g. "WBC 6.4 10^3/uL")
-                m3 = re.match(
-                    r"^([A-Za-z0-9\s/_\-\(\)\.]+?)\s+([<>]?\s*\d+(?:\.\d+)?)\s*([a-zA-Z0-9^/%µ\-_/]+)$",
-                    line,
-                )
-                if m3:
-                    label, value, unit = m3.groups()
-
-        if label and value:
-            label_clean = label.strip()
-            if len(label_clean) < 2 or label_clean.lower() in {"page", "report", "date", "dr", "md", "total"}:
-                continue
-            val_clean = value.strip()
-            unit_clean = (unit or "").strip()
-            ref_clean = (ref_range or "").strip()
-            status = _recompute_status(val_clean, ref_clean, "unknown")
-            field_id = _field_id(page_number, index, label_clean)
-            results.append(
-                ExtractedField(
-                    field_id=field_id,
-                    label=label_clean,
-                    value=val_clean,
-                    unit=unit_clean,
-                    reference_range=ref_clean,
-                    status=status,
-                    confidence="clearly_visible",
-                    page_number=page_number,
-                    source_text=line,
-                    extraction_method="native_text",
-                    user_edited=False,
-                )
-            )
-            index += 1
-
-    date_match = re.search(
-        r"(?:Report\s*date|Collection\s*date|Date\s*of\s*service)[:\s]*"
-        r"([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{1,2}/[0-9]{1,2}/[0-9]{4})",
-        text,
-        re.I,
+def _measurement_field(
+    measurement: ParsedMeasurement, page_number: int, index: int, bbox: tuple[float, ...] | None
+) -> ExtractedField:
+    status = _recompute_status(measurement.value, measurement.reference_range, "unknown")
+    # A printed H/L flag is used only when there's no range to check against.
+    if status == "unknown" and measurement.flag in {"H", "HH"}:
+        status = "flagged_high_on_report"
+    elif status == "unknown" and measurement.flag in {"L", "LL"}:
+        status = "flagged_low_on_report"
+    # The printed flag and the printed range disagree (e.g. "H" beside a
+    # value inside the range): neither is silently trusted.
+    disagrees = (
+        (measurement.flag in {"H", "HH"} and status in {"in_listed_range", "flagged_low_on_report"})
+        or (measurement.flag in {"L", "LL"} and status in {"in_listed_range", "flagged_high_on_report"})
     )
-    if date_match:
-        results.append(
-            ExtractedField(
-                field_id=_field_id(page_number, index, "Report date"),
-                label="Report date",
-                value=date_match.group(1).strip(),
-                unit="",
-                reference_range="",
+    needs_review = measurement.needs_review or disagrees
+    return ExtractedField(
+        field_id=_field_id(page_number, index, measurement.label),
+        label=measurement.label,
+        value=measurement.value,
+        unit=measurement.unit,
+        reference_range=measurement.reference_range,
+        flag=measurement.flag,
+        status=status,
+        confidence="needs_review" if needs_review else "clearly_visible",
+        page_number=page_number,
+        source_text=measurement.source_text,
+        source_bbox=[round(v, 2) for v in bbox] if bbox else None,
+        extraction_method="native_text",
+        extracted=_snapshot(measurement.label, measurement.value, measurement.unit, measurement.reference_range),
+        user_edited=False,
+    )
+
+
+# OCR rows below these word confidences always go to manual review.
+OCR_MIN_WORD_CONFIDENCE = 80.0
+
+
+def _fields_from_rows(
+    rows: list[Row], page_text: str, page_number: int, method: ExtractionMethod = "native_text"
+) -> list[ExtractedField]:
+    """Lab fields for one page from its positioned rows.
+
+    Deterministic and offline. Rows come from word coordinates (see
+    ``src.labs.table_reader``): with a table header each word is assigned to
+    its column; otherwise the strict line grammar applies. Report metadata
+    never becomes a measurement, values/units/ranges stay exactly as
+    printed, and a row that looks like a result but can't be read safely is
+    surfaced as an "Unread line" instead of being dropped or half-mapped.
+    """
+    found, unread = read_page_rows(rows)
+    results: list[ExtractedField] = []
+    for item in found:
+        field = _measurement_field(item.measurement, page_number, len(results), item.bbox)
+        field.extraction_method = method
+        # OCR can misread characters (e.g. "A1c" as "Aic", "1" as "l"):
+        # any uncertain word in the row means a person must check it.
+        if method == "tesseract_ocr" and item.min_confidence < OCR_MIN_WORD_CONFIDENCE:
+            field.confidence = "needs_review"
+        results.append(field)
+    for row in unread:
+        results.append(ExtractedField(
+            field_id=_field_id(page_number, len(results), UNREAD_LINE_LABEL),
+            label=UNREAD_LINE_LABEL,
+            status="unknown",
+            confidence="could_not_read",
+            page_number=page_number,
+            source_text=row.text,
+            source_bbox=[round(v, 2) for v in row.bbox],
+            extraction_method=method,
+            extracted=_snapshot(UNREAD_LINE_LABEL, "", "", ""),
+        ))
+
+    if any(field.label != UNREAD_LINE_LABEL for field in results):
+        # Labelled as printed ("Collection date" vs "Report date"): they are
+        # different clinical facts and must not be conflated.
+        for found_date in find_result_dates(page_text):
+            results.append(ExtractedField(
+                field_id=_field_id(page_number, len(results), found_date.label),
+                label=found_date.label,
+                value=found_date.value,
                 status="not_applicable",
                 confidence="clearly_visible",
                 page_number=page_number,
-                source_text=date_match.group(0).strip(),
-                extraction_method="native_text",
-                user_edited=False,
-            )
-        )
-
+                source_text=found_date.source_text,
+                extraction_method=method,
+                extracted=_snapshot(found_date.label, found_date.value, "", ""),
+            ))
     return results
+
+
+def _extract_native_text_fields(text: str, page_number: int) -> list[ExtractedField]:
+    """Plain-text entry point (no coordinates): one row per text line, so
+    the same rules apply; no source region is recorded."""
+    rows = [
+        Row([Word(0.0, float(i), 0.0, float(i) + 1, token) for token in line.split()])
+        for i, line in enumerate(text.splitlines())
+        if line.strip()
+    ]
+    fields = _fields_from_rows(rows, text, page_number)
+    for field in fields:
+        field.source_bbox = None
+    return fields
+
+
+def _extract_native_page_fields(page: Any, page_number: int) -> list[ExtractedField]:
+    """Lab fields from a PDF page's text layer, read by word position."""
+    rows = rows_from_words(page.get_text("words"))
+    return _fields_from_rows(rows, page.get_text("text", sort=True), page_number)
+
+
+def _text_layer_usable(text: str) -> bool:
+    """A text layer worth trusting: present, and not mostly replacement
+    characters or symbol noise (a broken font map reads as garbage and must
+    go to OCR instead)."""
+    visible = [ch for ch in text if not ch.isspace()]
+    if len(visible) < 20:
+        return False
+    garbage = sum(1 for ch in visible if ch == "\ufffd" or 0xE000 <= ord(ch) <= 0xF8FF)
+    alnum = sum(1 for ch in visible if ch.isalnum())
+    return garbage / len(visible) < 0.05 and alnum / len(visible) > 0.4
+
+
+def _ocr_page_fields(ocr: OcrPage, page_number: int) -> list[ExtractedField]:
+    rows = group_rows([Word(w.x0, w.y0, w.x1, w.y1, w.text, w.confidence) for w in ocr.words])
+    page_text = "\n".join(row.text for row in rows)
+    return _fields_from_rows(rows, page_text, page_number, method="tesseract_ocr")
+
+
+def _read_scanned_page(
+    image: Image.Image, page_number: int, preview: Path, set_stage: Callable[..., None]
+) -> tuple[list[ExtractedField], dict[str, Any]]:
+    """OCR a page image locally; fall back to the AI vision model only when
+    OCR is unavailable or finds nothing. Returns fields plus PageInfo extras
+    describing how the page was read."""
+    info: dict[str, Any] = {"text_source": "none", "quality": "unreadable", "quality_notes": [], "ocr_confidence": None}
+    fields: list[ExtractedField] = []
+    if ocr_available():
+        set_stage("extracting")
+        try:
+            ocr = ocr_image(image, dpi=OCR_RENDER_DPI)
+        except Exception as error:  # noqa: BLE001 — OCR failure degrades to the vision path
+            logger.warning("ocr_failed", extra={"error_type": type(error).__name__})
+            ocr = None
+        if ocr is not None:
+            info.update(
+                text_source="ocr", quality=ocr.quality, quality_notes=list(ocr.notes),
+                ocr_confidence=ocr.mean_confidence, width=round(ocr.width, 2), height=round(ocr.height, 2),
+            )
+            if ocr.rotation_applied:
+                # The preview is a derived view: show it upright so regions
+                # line up. The original upload is untouched.
+                with Image.open(preview) as shown:
+                    shown.rotate(-ocr.rotation_applied, expand=True).save(preview, format="PNG")
+            fields = _ocr_page_fields(ocr, page_number)
+    if not fields:
+        set_stage("extracting")
+        try:
+            fields = _extract_page_fields(preview, page_number, "", set_stage)
+        except PermanentProcessingError:
+            fields = []
+        if fields:
+            info["text_source"] = "vision"
+            notes = ["OCR could not read this page" if note == "No readable text found" else note for note in info["quality_notes"]]
+            info["quality_notes"] = [*notes, "Read by the AI vision model"]
+            for field in fields:
+                field.source_bbox = None  # the vision model gives no positions
+                # The model's own "clearly visible" claim isn't evidence: it
+                # gives no confidence or positions and can skip rows, so a
+                # person checks every value it reads.
+                if field.confidence == "clearly_visible":
+                    field.confidence = "needs_review"
+    if not fields and "No readable text found" not in info["quality_notes"]:
+        info["quality_notes"] = [*info["quality_notes"], "No lab results found on this page"]
+    return fields, info
 
 
 def _process_saved_pdf(
@@ -672,21 +831,23 @@ def _process_saved_pdf(
             preview = pages_dir / f"page-{n}.png"
             page.get_pixmap(dpi=RENDER_DPI, alpha=False).save(str(preview))
 
-            # Step 1: Native PDF text extraction
-            native_fields = _extract_native_text_fields(text, n)
-            if native_fields:
-                page_fields = native_fields
+            # 1. Text layer, read by word position (deterministic, exact).
+            #    Skipped when the layer is missing or garbled.
+            # 2. Local OCR of the rendered page (deterministic, with
+            #    per-word confidence).
+            # 3. AI vision model, only when OCR finds nothing. A transient
+            #    vision failure propagates so the whole job can be retried.
+            extras: dict[str, Any] = {"width": round(page.rect.width, 2), "height": round(page.rect.height, 2)}
+            page_fields = _extract_native_page_fields(page, n) if _text_layer_usable(text) else []
+            if page_fields:
+                extras.update(text_source="text_layer", quality="good")
             else:
-                # Step 2: Vision model only for scanned/unparsed pages. A
-                # transient failure (Ollama unreachable/timeout) propagates
-                # so the whole job can be retried; a permanent per-page
-                # failure just leaves that page's fields empty, matching
-                # the existing "could_not_read" degrade-gracefully design.
-                set_stage("extracting")
-                try:
-                    page_fields = _extract_page_fields(preview, n, text, set_stage)
-                except PermanentProcessingError:
-                    page_fields = []
+                rendered = page.get_pixmap(dpi=OCR_RENDER_DPI, alpha=False)
+                image = Image.frombytes("RGB", (rendered.width, rendered.height), rendered.samples)
+                page_fields, read_info = _read_scanned_page(image, n, preview, set_stage)
+                extras.update(read_info)
+                if text and not _text_layer_usable(text):
+                    extras["quality_notes"] = ["Text layer unreadable; page was OCR'd", *extras.get("quality_notes", [])]
 
             fields.extend(page_fields)
             pages.append(PageInfo(
@@ -694,6 +855,7 @@ def _process_saved_pdf(
                 preview_url=f"/api/documents/v2/{document_id}/pages/{n}/preview",
                 text_available=bool(text),
                 extracted_field_count=len(page_fields),
+                **extras,
             ))
     finally:
         doc.close()
@@ -716,13 +878,15 @@ def _process_saved_image(
 
     preview = pages_dir / "page-1.png"
 
+    # The upload itself is kept as the original evidence (and so the photo
+    # can be re-read later); the preview is a derived, upright view.
     with Image.open(validation.path) as image:
-        image.convert("RGB").save(preview, format="PNG")
+        upright = ImageOps.exif_transpose(image).convert("RGB")
+    upright.save(preview, format="PNG")
 
-    raw_path.unlink(missing_ok=True)
     set_stage("extracting")
     try:
-        page_fields = _extract_page_fields(preview, 1, "", set_stage)
+        page_fields, read_info = _read_scanned_page(upright, 1, preview, set_stage)
     except TransientProcessingError as error:
         # Lab-field vision on dense radiology photos routinely exceeds the
         # local vision budget. Imaging already reads this class of upload —
@@ -734,12 +898,17 @@ def _process_saved_image(
             technical_detail=error.technical_detail,
         ) from error
 
+    read_info.setdefault("width", float(upright.width))
+    read_info.setdefault("height", float(upright.height))
+    if read_info.get("text_source") == "ocr" and "Low resolution" in read_info.get("quality_notes", []):
+        read_info["quality_notes"] = [*read_info["quality_notes"], "A closer, sharper photo will read more reliably"]
     pages = [
         PageInfo(
             page_number=1,
             preview_url=f"/api/documents/v2/{document_id}/pages/1/preview",
             text_available=False,
             extracted_field_count=len(page_fields),
+            **read_info,
         )
     ]
 
@@ -950,11 +1119,147 @@ async def document_status(
     )
 
 
+class ReviewDraftRequest(BaseModel):
+    items: dict[str, ReviewDraftItem] = Field(default_factory=dict, max_length=2000)
+
+
+@router.put("/{document_id}/review-draft")
+async def save_review_draft(
+    document_id: str, request: ReviewDraftRequest, user: User = Depends(require_user)
+) -> dict[str, Any]:
+    """Save an in-progress review so it can be resumed later.
+
+    Refused once the document is confirmed (the record is final), and only
+    for fields extraction actually produced.
+    """
+    state = _load_owned_state(document_id, user)
+    if state.confirmed or state.status == "confirmed":
+        raise MediGuideError(
+            "DOCUMENT_ALREADY_CONFIRMED",
+            "This document is already confirmed; its review can't be changed.",
+            status_code=409,
+        )
+    known = {field.field_id for field in state.fields}
+    unknown = set(request.items) - known
+    if unknown:
+        raise MediGuideError(
+            "UNKNOWN_FIELD",
+            "This review includes a value that wasn't extracted from the document. "
+            "Reload the document and review it again.",
+            status_code=422,
+        )
+    state.review_draft = request.items
+    state.review_draft_saved_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _save_state(state)
+    reviewed = sum(1 for item in request.items.values() if item.state != "unverified")
+    return {"saved": True, "saved_at": state.review_draft_saved_at, "reviewed": reviewed, "total": len(known)}
+
+
+@router.post("/{document_id}/reextract", response_model=DocumentState)
+async def reextract_document(
+    document_id: str, user: User = Depends(require_user)
+) -> DocumentState:
+    """Re-read an unconfirmed document with the current extraction logic.
+
+    For sessions read by an older extractor (or a reviewer who wants a
+    fresh read). Only unconfirmed documents: nothing has entered the
+    verified record yet, so nothing confirmed can be overwritten. The
+    original upload is kept on disk, which is what makes this repeatable.
+    """
+    state = _load_owned_state(document_id, user)
+    if state.confirmed or state.status == "confirmed":
+        raise MediGuideError(
+            "DOCUMENT_ALREADY_CONFIRMED",
+            "This document is already confirmed, so it can't be re-read. "
+            "Upload it again to start a new review.",
+            status_code=409,
+        )
+    if state.status == "extracting":
+        raise MediGuideError(
+            "DOCUMENT_BUSY",
+            "This document is still being read. Try again in a moment.",
+            status_code=409,
+            retryable=True,
+        )
+    if _source_file(document_id) is None:
+        # Photos uploaded before originals were kept can't be re-read.
+        raise MediGuideError(
+            "REEXTRACT_UNAVAILABLE",
+            "The original file for this document isn't available to re-read. Upload it again for a fresh read.",
+            status_code=422,
+        )
+    state.status = "uploaded"
+    state.fields = []
+    # A fresh read produces new fields, so decisions about the old ones
+    # no longer apply.
+    state.review_draft = {}
+    state.review_draft_saved_at = ""
+    _save_state(state)
+    return await process_document(document_id, user)
+
+
+# One extraction per document at a time (per API process). A double-click,
+# retry or second tab waits for the running job and then gets its result,
+# instead of starting a duplicate job that races on the same session.
+#
+# A threading.Lock rather than an asyncio.Lock: an asyncio.Lock belongs to one
+# event loop, so requests served on another loop (several workers' threads,
+# or a test client) could fail instead of waiting. It is acquired off the
+# event loop so a waiting request never blocks other requests.
+_EXTRACTION_LOCKS: dict[str, threading.Lock] = {}
+_EXTRACTION_LOCKS_GUARD = threading.Lock()
+
+
+def _source_file(document_id: str) -> Path | None:
+    """The original upload kept on disk (PDF, or the photo as uploaded)."""
+    folder = _folder(document_id)
+    pdf = folder / "document.pdf"
+    if pdf.exists():
+        return pdf
+    uploads = sorted((folder / "pages").glob("upload.*"))
+    return uploads[0] if uploads else None
+
+
+def _fingerprint(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _confirmed_duplicate(user: User, document_id: str, sha256: str) -> dict[str, str] | None:
+    """Another confirmed document of this owner with byte-identical content."""
+    if not sha256:
+        return None
+    for summary in _list_document_sessions(user):
+        if summary.document_id == document_id or not summary.confirmed:
+            continue
+        try:
+            other = _load_state(summary.document_id)
+        except Exception:
+            continue
+        if other.content_sha256 == sha256:
+            return {"document_id": other.document_id, "filename": other.filename}
+    return None
+
+
 @router.post("/{document_id}/process", response_model=DocumentState)
 async def process_document(
     document_id: str, user: User = Depends(require_user)
 ) -> DocumentState:
     """Extract pages and fields from a previously uploaded document."""
+    _load_owned_state(document_id, user)  # ownership check before waiting
+    with _EXTRACTION_LOCKS_GUARD:
+        lock = _EXTRACTION_LOCKS.setdefault(document_id, threading.Lock())
+    await run_in_threadpool(lock.acquire)
+    try:
+        return await _process_document_locked(document_id, user)
+    finally:
+        lock.release()
+
+
+async def _process_document_locked(document_id: str, user: User) -> DocumentState:
     state = _load_owned_state(document_id, user)
     folder = _folder(document_id)
     pages_dir = folder / "pages"
@@ -1008,7 +1313,12 @@ async def process_document(
             confirmed=False,
             content_type=state.content_type,
             file_size=state.file_size,
+            extraction_version=EXTRACTION_VERSION,
         )
+        source = _source_file(document_id)
+        if source is not None:
+            state.content_sha256 = _fingerprint(source)
+            state.duplicate_of = _confirmed_duplicate(user, document_id, state.content_sha256)
         _save_state(state)
         return state
 
@@ -1090,29 +1400,17 @@ def _merge_reviewed_fields(
 
 
 def _report_date_for(document_id: str, fields: list[ExtractedField]) -> str | None:
-    # Prefer human-confirmed date fields (supports multi-page / multi-date reports).
-    for field in fields:
-        if "date" in field.label.lower() and field.value.strip():
+    """The document's date, from human-confirmed date fields only.
+
+    A collection date wins over other result dates; a date of birth is never
+    used. Nothing is scraped from unreviewed page text: a report whose date
+    the reviewer didn't confirm stays undated rather than getting a guess.
+    """
+    dated = [f for f in fields if is_result_date_label(f.label) and f.value.strip()]
+    for field in dated:
+        if "collect" in field.label.lower():
             return field.value.strip()
-    pdf_path = _folder(document_id) / "document.pdf"
-    if not pdf_path.exists():
-        return None
-    try:
-        doc = pymupdf.open(pdf_path)
-        try:
-            for page in doc:
-                match = re.search(
-                    r"(?:Report\s*date|Date|Collection\s*date)[:\s]*([0-9\-/]+)",
-                    page.get_text("text"),
-                    re.I,
-                )
-                if match:
-                    return match.group(1).strip()
-        finally:
-            doc.close()
-    except Exception:
-        return None
-    return None
+    return dated[0].value.strip() if dated else None
 
 
 @router.post("/{document_id}/confirm")
@@ -1181,6 +1479,7 @@ async def confirm(
     state.fields = confirmed_fields
     state.confirmed = True
     state.status = "confirmed"
+    state.review_draft = {}
     _save_state(state)
 
     return {

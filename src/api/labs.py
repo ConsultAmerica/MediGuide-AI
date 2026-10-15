@@ -29,9 +29,14 @@ def get_tests(user: User = Depends(require_user)) -> dict[str, object]:
 @router.get("/timeline/{test_code}")
 def get_timeline(test_code: str, user: User = Depends(require_user)) -> dict[str, object]:
     points = timeline_for_test(test_code, user.id)
+    plotted = [point for point in points if point.get("plotted")]
     return {
         "test_code": test_code,
         "count": len(points),
+        # The unit the chart is drawn in; results in any other unit are
+        # listed but not plotted (nothing is converted).
+        "series_unit": plotted[-1]["unit"] if plotted else "",
+        "plotted_count": len(plotted),
         "points": points,
     }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import Link from "next/link";
 import {
   ArrowRight, BadgeCheck, ChevronLeft, ChevronRight, ClipboardList, FileText,
@@ -111,11 +111,40 @@ const SLIDES: Slide[] = [
   },
 ];
 
+function capitalize(text: string) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 export function FeatureCarousel() {
   const [index, setIndex] = useState(0);
   const pointerStart = useRef<number | null>(null);
   const count = SLIDES.length;
   const go = (next: number) => setIndex((next + count) % count);
+
+  // One stable height for every slide (the tallest one's), so switching
+  // tabs never shifts the page below. Slides are kept close in height (the
+  // "Planned" note is compact), so centring leaves only a small even margin.
+  const slideRefs = useRef<(HTMLElement | null)[]>([]);
+  const [viewportHeight, setViewportHeight] = useState<number>();
+  useEffect(() => {
+    const slides = slideRefs.current.filter((node): node is HTMLElement => Boolean(node));
+    if (!slides.length) return;
+    // Natural height = content span + padding, measured from the children,
+    // so it can shrink again after a resize (slides themselves are stretched).
+    const natural = (node: HTMLElement) => {
+      const children = Array.from(node.children) as HTMLElement[];
+      if (!children.length) return node.offsetHeight;
+      const rects = children.map((child) => child.getBoundingClientRect());
+      const span = Math.max(...rects.map((r) => r.bottom)) - Math.min(...rects.map((r) => r.top));
+      const style = getComputedStyle(node);
+      return Math.ceil(span + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom));
+    };
+    const measure = () => setViewportHeight(Math.max(...slides.map(natural)));
+    measure();
+    const observer = new ResizeObserver(measure);
+    slides.forEach((node) => Array.from(node.children).forEach((child) => observer.observe(child)));
+    return () => observer.disconnect();
+  }, []);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "ArrowRight") { event.preventDefault(); go(index + 1); }
@@ -164,11 +193,12 @@ export function FeatureCarousel() {
         })}
       </div>
 
-      <div className="carousel-viewport" onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerCancel={() => { pointerStart.current = null; }}>
+      <div className="carousel-viewport" style={viewportHeight ? { height: viewportHeight } : undefined} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerCancel={() => { pointerStart.current = null; }}>
         <div className="carousel-track" style={{ transform: `translateX(-${index * 100}%)` }}>
           {SLIDES.map((slide, i) => (
             <article
               key={slide.key}
+              ref={(node) => { slideRefs.current[i] = node; }}
               id={`feature-slide-${slide.key}`}
               role="tabpanel"
               aria-roledescription="slide"
@@ -183,7 +213,7 @@ export function FeatureCarousel() {
                 <ul>
                   {slide.points.map((point) => <li key={point}>{point}</li>)}
                 </ul>
-                {slide.planned && <p className="carousel-planned"><span className="status-pill status-planned">Planned</span>{slide.planned.replace(/^Planned:\s*/, "")}</p>}
+                {slide.planned && <p className="carousel-planned"><span className="status-pill status-planned">Planned</span>{capitalize(slide.planned.replace(/^Planned:\s*/, ""))}</p>}
                 <Link href={slide.href} className="site-link-arrow" prefetch={false}>
                   {slide.cta} <ArrowRight size={15} aria-hidden="true" />
                 </Link>

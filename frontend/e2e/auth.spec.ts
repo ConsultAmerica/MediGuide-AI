@@ -52,8 +52,11 @@ test.describe("Accounts", () => {
 
   test("a session revoked elsewhere sends the user back to sign in", async ({ page, request }) => {
     await page.goto("/signin");
-    await page.getByRole("button", { name: "Try a private demo workspace" }).click();
-    await expect(page).toHaveURL(/\/workspace\/home$/);
+    // A click before the page has hydrated does nothing; retry until it lands.
+    await expect(async () => {
+      if (!/\/workspace\//.test(page.url())) await page.getByRole("button", { name: "Try a private demo workspace" }).click();
+      await expect(page).toHaveURL(/\/workspace\/home$/, { timeout: 3_000 });
+    }).toPass({ timeout: 30_000 });
 
     const token = await page.evaluate(() => window.localStorage.getItem("mediguide.session"));
     await request.post(`${E2E_BACKEND_URL}/api/auth/logout`, { headers: { Authorization: `Bearer ${token}` } });
