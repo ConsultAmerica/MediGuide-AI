@@ -27,3 +27,6 @@ data/*.db
 *.log
 
 .vercel
+
+# Generated API bundle for Vercel (scripts/build_vercel_api.py)
+.vercel-api/

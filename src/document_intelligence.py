@@ -53,6 +53,7 @@ from src.labs.table_reader import Row, Word, group_rows, read_page_rows, rows_fr
 from src.ocr import OcrPage, ocr_available, ocr_image
 from src.labs.service import create_observations_from_document
 from src.observability.logging import get_logger
+from src.shared import file_store
 from src.safety import check_for_emergency
 from src.sample_fixtures import generate_sample_lab_report
 from src.shared.errors import MediGuideError
@@ -242,7 +243,7 @@ class ExplainResponse(BaseModel):
 
 
 def _folder(document_id: str) -> Path:
-    return TEMP_DIR / document_id
+    return file_store.folder("documents", TEMP_DIR, document_id)
 
 
 def _state_path(document_id: str) -> Path:
@@ -946,9 +947,6 @@ class SessionSummary(BaseModel):
 
 
 def _list_document_sessions(user: User) -> list[SessionSummary]:
-    if not TEMP_DIR.exists():
-        return []
-
     with session_scope() as session:
         owned = owned_document_ids(session, user.id)
 

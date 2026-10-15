@@ -86,6 +86,7 @@ from src.imaging_sections import (
 from src.labs.table_reader import Word, group_rows, rows_from_words
 from src.ocr import ocr_available, ocr_image
 from src.observability.logging import get_logger
+from src.shared import file_store
 from src.shared.errors import MediGuideError
 from src.shared.job_runner import run_extraction_job
 from src.shared.resilience import (
@@ -109,6 +110,11 @@ MODALITY_LABELS: dict[str, str] = {
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
 
 TEMP_DIR = Path(os.getenv("IMAGING_TEMP_DIR", str(BASE_DIR / "outputs" / "imaging")))
+
+
+def _folder(document_id: str) -> Path:
+    """A report's folder (original, page previews, lines.json)."""
+    return file_store.folder("imaging", TEMP_DIR, document_id)
 MAX_MB = int(os.getenv("IMAGING_MAX_MB", "20"))
 MAX_PAGES = int(os.getenv("IMAGING_MAX_PAGES", "25"))
 RENDER_DPI = int(os.getenv("IMAGING_RENDER_DPI", "140"))
@@ -404,7 +410,7 @@ def _load_lines(folder: Path) -> tuple[list[ReportLine], dict[int, tuple[float, 
 
 
 async def _save_report_upload(file: UploadFile, document_id: str, suffix: str) -> Path:
-    folder = TEMP_DIR / document_id
+    folder = _folder(document_id)
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"report{suffix}"
     max_bytes = MAX_MB * 1024 * 1024
@@ -595,7 +601,7 @@ async def upload_report(
         )
 
     document_id = uuid.uuid4().hex
-    folder = TEMP_DIR / document_id
+    folder = _folder(document_id)
     pages_dir = folder / "pages"
 
     try:
@@ -824,7 +830,7 @@ async def report_lines_endpoint(study_id: str, user: User = Depends(require_user
     with session_scope() as session:
         study = _owned_report(session, study_id, user)
         document_id = study.report_document_id
-    loaded = _load_lines(TEMP_DIR / document_id)
+    loaded = _load_lines(_folder(document_id))
     if loaded is None:
         return {"lines": [], "adjustable": False}
     lines, _, _ = loaded
@@ -856,7 +862,7 @@ async def adjust_boundaries_endpoint(
                 "Undo the confirmed or rejected sections before changing section boundaries.",
                 status_code=409,
             )
-    loaded = _load_lines(TEMP_DIR / document_id)
+    loaded = _load_lines(_folder(document_id))
     if loaded is None:
         raise MediGuideError(
             "BOUNDARIES_NOT_ADJUSTABLE",
@@ -1121,7 +1127,7 @@ async def report_page_preview(study_id: str, page_number: int, user: User = Depe
             raise HTTPException(status_code=404, detail="No report attached to this study.")
         document_id = study.report_document_id
 
-    path = TEMP_DIR / document_id / "pages" / f"page-{page_number}.png"
+    path = _folder(document_id) / "pages" / f"page-{page_number}.png"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Page preview not found.")
     return FileResponse(path, media_type="image/png")

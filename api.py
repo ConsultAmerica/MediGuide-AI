@@ -16,7 +16,7 @@ from pathlib import Path
 import requests
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.agents import MedicalAgentOrchestrator, OrchestratorRequest
@@ -55,6 +55,7 @@ from src.observability.logging import (
     new_request_id,
     set_request_id,
 )
+from src.shared import file_store
 from src.shared.errors import install_error_handlers
 from src.tts import TextToSpeechError
 
@@ -128,6 +129,28 @@ async def _request_id_middleware(request: Request, call_next):
         },
     )
     return response
+
+
+@app.middleware("http")
+async def _file_store_middleware(request: Request, call_next):
+    """With durable storage enabled (serverless hosting), push every record
+    folder this request touched before the response leaves: the instance may
+    be frozen as soon as it does. A failed save is reported, never hidden."""
+    token = file_store.begin_request()
+    if token is None:
+        return await call_next(request)
+    try:
+        response = await call_next(request)
+        try:
+            await asyncio.to_thread(file_store.persist_touched)
+        except Exception:  # noqa: BLE001 — logged in file_store
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Your changes couldn't be saved to storage. Please try again."},
+            )
+        return response
+    finally:
+        file_store.end_request(token)
 
 
 # Production frontend (Vercel) + local Next.js. FRONTEND_ORIGINS can extend the

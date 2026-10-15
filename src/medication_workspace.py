@@ -49,6 +49,7 @@ from src.database.session import session_scope
 from src.document_intelligence import EvidenceSource, retrieve_approved_evidence
 from src.image_validator import prepare_vision_image, validate_image_file
 from src.observability.logging import get_logger
+from src.shared import file_store
 from src.safety import check_for_emergency
 from src.shared.errors import MediGuideError
 from src.shared.resilience import (
@@ -182,7 +183,7 @@ class MedicationInfoResponse(BaseModel):
 
 
 def _folder(medication_id: str) -> Path:
-    return TEMP_DIR / medication_id
+    return file_store.folder("medications", TEMP_DIR, medication_id)
 
 
 def _state_path(medication_id: str) -> Path:

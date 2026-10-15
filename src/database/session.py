@@ -17,14 +17,23 @@ _SessionLocal: sessionmaker[Session] | None = None
 def get_engine() -> Engine:
     global _engine, _SessionLocal
     if _engine is None:
-        connect_args = {}
+        connect_args: dict[str, object] = {}
+        pool_options: dict[str, object] = {}
         if DATABASE_URL.startswith("sqlite"):
             connect_args["check_same_thread"] = False
+        elif DATABASE_URL.startswith("postgresql+psycopg"):
+            # Pooled endpoints (Neon, PgBouncer in transaction mode) can hand
+            # each statement to a different server connection, so psycopg's
+            # automatic server-side prepared statements must stay off.
+            connect_args["prepare_threshold"] = None
+            # Serverless instances are many and short-lived: keep each small.
+            pool_options = {"pool_size": 2, "max_overflow": 3, "pool_recycle": 300}
         _engine = create_engine(
             DATABASE_URL,
             future=True,
             pool_pre_ping=True,
             connect_args=connect_args,
+            **pool_options,
         )
         _SessionLocal = sessionmaker(
             bind=_engine,

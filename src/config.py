@@ -189,7 +189,18 @@ DELETE_SPEECH_AFTER_MINUTES = int(
 
 # Relational store for document → page → field → lab observation provenance.
 # Default SQLite keeps local demos zero-config; switch to Postgres in production.
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    f"sqlite:///{(BASE_DIR / 'data' / 'mediguide.db').as_posix()}",
+def _normalize_database_url(url: str) -> str:
+    """Hosted Postgres (Neon, Vercel) hands out postgres:// URLs; SQLAlchemy
+    needs the psycopg 3 driver named explicitly."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
+DATABASE_URL = _normalize_database_url(
+    os.getenv(
+        "DATABASE_URL",
+        f"sqlite:///{(BASE_DIR / 'data' / 'mediguide.db').as_posix()}",
+    )
 )
