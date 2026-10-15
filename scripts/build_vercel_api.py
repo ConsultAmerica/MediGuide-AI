@@ -50,9 +50,13 @@ VERCEL_JSON = {
 
 
 def main() -> None:
-    if OUT.exists():
-        shutil.rmtree(OUT)
-    OUT.mkdir()
+    # Rebuild everything except the Vercel project link (.vercel/) and
+    # pulled env files, so `vercel deploy` keeps targeting the same project.
+    OUT.mkdir(exist_ok=True)
+    for entry in OUT.iterdir():
+        if entry.name == ".vercel" or entry.name.startswith(".env"):
+            continue
+        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
     for item in COPY:
         source = ROOT / item
         target = OUT / item
@@ -65,6 +69,9 @@ def main() -> None:
     (OUT / "app.py").write_text(ENTRYPOINT, encoding="utf-8")
     (OUT / "vercel.json").write_text(json.dumps(VERCEL_JSON, indent=2) + "\n", encoding="utf-8")
     (OUT / ".python-version").write_text("3.12\n", encoding="utf-8")
+    # Pulled env files hold credentials (they already live in the project's
+    # environment); never upload them with the source.
+    (OUT / ".vercelignore").write_text(".env*\n.agents\n.claude\nskills-lock.json\n", encoding="utf-8")
     size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
     print(f"Built {OUT.relative_to(ROOT)} ({size / 1_048_576:.1f} MB of source)")
 

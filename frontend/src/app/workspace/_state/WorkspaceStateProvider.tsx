@@ -123,6 +123,9 @@ function useWorkspaceState() {
   const [docOriginalFields, setDocOriginalFields] = useState<DocField[]>([]);
   const [draftStatus, setDraftStatus] = useState<DraftSaveStatus>("idle");
   const lastSavedDraft = useRef("");
+  // Set while a confirmation is in flight: a draft save that fires then
+  // would reach a document that is already confirmed (and be refused).
+  const confirmingDocument = useRef(false);
   const [labTests, setLabTests] = useState<LabTest[]>([]);
   const [selectedLabCode, setSelectedLabCode] = useState("hemoglobin_a1c");
   const [labPoints, setLabPoints] = useState<LabPoint[]>([]);
@@ -154,6 +157,7 @@ function useWorkspaceState() {
     const body = JSON.stringify(items);
     if (body === lastSavedDraft.current) return;
     const timer = window.setTimeout(async () => {
+      if (confirmingDocument.current) return;
       setDraftStatus("saving");
       try {
         const response = await apiFetch(`${API_URL}/api/documents/v2/${draftDocumentId}/review-draft`, {
@@ -714,6 +718,7 @@ function useWorkspaceState() {
     setDocFields(fields);
     setFieldReviewState(review);
     lastSavedDraft.current = JSON.stringify(buildReviewDraft(fields, state.fields || [], review));
+    confirmingDocument.current = false;
     setDraftStatus(state.review_draft_saved_at ? "saved" : "idle");
   }
 
@@ -757,6 +762,7 @@ function useWorkspaceState() {
     // Every value needs a decision; nothing is confirmed by default.
     if (docFields.some((field) => (fieldReviewState[field.field_id] || "unverified") === "unverified")) return;
     setError(""); setDocErrorKind(""); setLoadingStage("Saving your reviewed values...");
+    confirmingDocument.current = true;
     try {
       const response = await apiFetch(`${API_URL}/api/documents/v2/${docState.document_id}/confirm`, {
         method: "POST",
@@ -793,6 +799,7 @@ function useWorkspaceState() {
         setDocErrorKind("confirm");
       }
     } catch (err) {
+      confirmingDocument.current = false;
       setDocErrorKind("confirm");
       if (!API_URL) setError(API_CONFIGURATION_MESSAGE);
       else if (err instanceof Error && err.message && err.message !== "Failed to fetch") setError(err.message);
@@ -850,7 +857,7 @@ function useWorkspaceState() {
   }
 
   function resetDocument() {
-    setDocOriginalFields([]); setDraftStatus("idle"); lastSavedDraft.current = "";
+    setDocOriginalFields([]); setDraftStatus("idle"); lastSavedDraft.current = ""; confirmingDocument.current = false;
     setDocState(null); setDocFields([]); setDocConfirmed(false); setDocReviewChecked(false); setDocExplain(null); setDocQuestion(""); setDocSelectedPage(1); setError(""); setDocErrorKind(""); setAddConfirmedLabsHint(""); setConfirmedLabCodes([]); setPendingDocId(null); setHighlightedFieldId(null);
   }
 
