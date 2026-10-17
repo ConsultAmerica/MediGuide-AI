@@ -1,0 +1,15 @@
+# Store and check out text files with LF on every platform, so Windows
+# clones (core.autocrlf=true) don't flip endings or warn on every commit.
+* text=auto eol=lf
+
+# Binary files are never converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.sqlite3 binary
