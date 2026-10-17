@@ -21,7 +21,7 @@ function LabsPageContent() {
   const {
     labTests, selectedLabCode, setSelectedLabCode, labPoints, selectedLabPoint,
     setSelectedLabPoint, inspectDocument, exportLabPoints, addLabsToVisit,
-    askAboutLabs, setConfirmDeleteObservationId, handleViewChange,
+    askAboutLabs, chatAvailable, setConfirmDeleteObservationId, handleViewChange,
     loadLabs, loadLabSummary,
   } = useWorkspaceContext();
 
@@ -73,7 +73,7 @@ function LabsPageContent() {
       onInspectDocument={(documentId, pageNumber, fieldId) => void inspectDocument(documentId, pageNumber, fieldId)}
       onExport={exportLabPoints}
       onAddToVisit={addLabsToVisit}
-      onAskAbout={askAboutLabs}
+      onAskAbout={chatAvailable ? askAboutLabs : undefined}
       onRequestDeleteObservation={(observationId) => setConfirmDeleteObservationId(observationId)}
       onOpenDocuments={() => handleViewChange("documents")}
     />

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pymupdf
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from PIL import Image
@@ -42,7 +42,7 @@ from src.medications.label_parser import (
     name_key,
     parse_label,
 )
-from src.ocr import ocr_available, ocr_image
+from src.ocr import client_ocr, ocr_available, ocr_image, save_client_ocr
 from src.auth.dependencies import not_found, require_user
 from src.database.models import User
 from src.database.session import session_scope
@@ -435,7 +435,7 @@ def _entries_from_lines(medication_id: str, lines: list[LabelLine], *, ocr: bool
 def _ocr_label_lines(image: Image.Image, page: int) -> list[LabelLine]:
     from src.labs.table_reader import Word, group_rows
 
-    result = ocr_image(image)
+    result = ocr_image(image, page_number=page)
     rows = group_rows([Word(w.x0, w.y0, w.x1, w.y1, w.text, w.confidence) for w in result.words])
     return [LabelLine(row.text, page, min((w.confidence for w in row.words), default=0.0)) for row in rows if row.text.strip()]
 
@@ -443,6 +443,11 @@ def _ocr_label_lines(image: Image.Image, page: int) -> list[LabelLine]:
 def _read_label_file(folder: Path, preview: Path) -> tuple[list[LabelLine], str]:
     """The label's lines and how they were read: the PDF's own text first,
     then local OCR. Nothing is sent to an outside service."""
+    with client_ocr(folder):
+        return _read_label_lines(folder, preview)
+
+
+def _read_label_lines(folder: Path, preview: Path) -> tuple[list[LabelLine], str]:
     pdf_path = folder / "upload.pdf"
     if pdf_path.exists():
         doc = pymupdf.open(pdf_path)
@@ -623,7 +628,11 @@ async def _ingest_image(file: UploadFile, folder: Path) -> Path:
 
 
 @router.post("/upload", response_model=MedicationState)
-async def upload(file: UploadFile = File(...), user: User = Depends(require_user)) -> MedicationState:
+async def upload(
+    file: UploadFile = File(...),
+    client_ocr_pages: str | None = Form(None, alias="client_ocr"),
+    user: User = Depends(require_user),
+) -> MedicationState:
     _cleanup_expired_sessions()
 
     suffix = Path(file.filename or "").suffix.lower()
@@ -642,6 +651,7 @@ async def upload(file: UploadFile = File(...), user: User = Depends(require_user
 
     try:
         preview = await (_ingest_pdf(file, folder) if suffix == ".pdf" else _ingest_image(file, folder))
+        save_client_ocr(folder, client_ocr_pages)
         lines, text_source = await run_in_threadpool(_read_label_file, folder, preview)
         entries = _entries_from_lines(medication_id, lines, ocr=text_source == "ocr")
         fallback_fields, other_text = None, ""
@@ -1005,21 +1015,42 @@ STRICT RULES:
 - Do not invent citations or medication facts not present in the approved evidence.
 """
 
-    client = _ollama_client()
-    response = client.chat(
-        model=TEXT_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Use only the confirmed label details and supplied approved evidence. "
-                    "Never provide personalized dosing instructions."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        options={"temperature": 0.1},
-    )
+    try:
+        client = _ollama_client()
+        response = client.chat(
+            model=TEXT_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Use only the confirmed label details and supplied approved evidence. "
+                        "Never provide personalized dosing instructions."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            options={"temperature": 0.1},
+        )
+    except Exception:
+        # No text model on this deployment: show the confirmed label and the
+        # approved passages as-is rather than failing.
+        logger.exception("medication explanation model unavailable")
+        return MedicationInfoResponse(
+            medication_id=medication_id,
+            answer_markdown=(
+                "### Confirmed label details\n\n"
+                "The explanation model is unavailable on this deployment, so MediGuide is "
+                "showing the label details you confirmed and the approved sources below, "
+                "quoted as-is.\n\n"
+                + context
+            ),
+            sources=sources,
+            limitations=[
+                "Educational explanation model is unavailable on this deployment.",
+                "This is not personalized dosing guidance.",
+                "Confirm all details with a licensed pharmacist or clinician.",
+            ],
+        )
 
     return MedicationInfoResponse(
         medication_id=medication_id,

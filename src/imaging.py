@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pymupdf
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from PIL import Image
@@ -84,7 +84,7 @@ from src.imaging_sections import (
     sections_from_ranges,
 )
 from src.labs.table_reader import Word, group_rows, rows_from_words
-from src.ocr import ocr_available, ocr_image
+from src.ocr import client_ocr, ocr_available, ocr_image, save_client_ocr
 from src.observability.logging import get_logger
 from src.shared import file_store
 from src.shared.errors import MediGuideError
@@ -291,7 +291,7 @@ def _extract_sections_via_vision(
 def _ocr_lines(image: Image.Image, page_number: int) -> tuple[list[ReportLine], tuple[float, float], int]:
     """Lines read by local Tesseract OCR, with their positions. Returns the
     coordinate space size and the rotation applied before reading."""
-    ocr = ocr_image(image, dpi=OCR_RENDER_DPI)
+    ocr = ocr_image(image, dpi=OCR_RENDER_DPI, page_number=page_number)
     rows = group_rows([Word(w.x0, w.y0, w.x1, w.y1, w.text, w.confidence) for w in ocr.words])
     return lines_from_rows(rows, page_number), (ocr.width, ocr.height), ocr.rotation_applied
 
@@ -567,7 +567,10 @@ async def delete_study_endpoint(study_id: str, user: User = Depends(require_user
 
 @router.post("/studies/{study_id}/report")
 async def upload_report(
-    study_id: str, file: UploadFile = File(...), user: User = Depends(require_user)
+    study_id: str,
+    file: UploadFile = File(...),
+    client_ocr_pages: str | None = Form(None, alias="client_ocr"),
+    user: User = Depends(require_user),
 ) -> dict[str, Any]:
     with session_scope() as session:
         study = get_owned_study(session, study_id, user.id)
@@ -606,6 +609,7 @@ async def upload_report(
 
     try:
         saved_path = await _save_report_upload(file, document_id, suffix)
+        save_client_ocr(folder, client_ocr_pages)
     except MediGuideError:
         shutil.rmtree(folder, ignore_errors=True)
         raise
@@ -626,7 +630,8 @@ async def upload_report(
 
     def work(set_stage) -> dict[str, str]:
         set_stage("reading")
-        lines, sizes, methods, page_count = _read_report(saved_path, suffix, pages_dir)
+        with client_ocr(folder):
+            lines, sizes, methods, page_count = _read_report(saved_path, suffix, pages_dir)
 
         set_stage("extracting")
         spans = find_sections(lines)

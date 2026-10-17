@@ -8,11 +8,13 @@ export default function AskPage() {
     answer, answerStatus, streaming, sources, question, setQuestion, messages,
     loadingStage, error, selectedSource, setSelectedSource, retry,
     handleViewChange, openDocumentPage, fileInput, copyAnswer, readAnswer,
-    sendQuestion,
+    sendQuestion, aiAvailable, chatAvailable,
   } = useWorkspaceContext();
 
   return (
     <Conversation
+      aiAvailable={aiAvailable}
+      chatAvailable={chatAvailable}
       answer={answer}
       status={answerStatus}
       streaming={streaming}

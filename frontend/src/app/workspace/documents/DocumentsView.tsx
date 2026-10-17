@@ -21,7 +21,7 @@ export function DocumentsView() {
     exportDocumentFields, confirmedLabCodes, openLabTimeline, setConfirmResetDocument,
     loadingStage, error, docErrorKind, addConfirmedLabsHint, retryDocumentAction, rereadDocument,
     processStage, processFailed, processRetry, fieldReviewState, draftStatus, setFieldDecision, undoFieldReview,
-    previewZoom, setPreviewZoom, sourceBreadcrumb, setSourceBreadcrumb,
+    previewZoom, setPreviewZoom, sourceBreadcrumb, setSourceBreadcrumb, aiAvailable, chatAvailable,
   } = useWorkspaceContext();
 
   return (
@@ -53,10 +53,10 @@ export function DocumentsView() {
       onDragLeave={() => setDocumentDragging(false)}
       onFieldChange={updateDocField}
       onConfirm={() => void confirmDocument()}
-      onExplain={() => void explainDocument()}
+      onExplain={aiAvailable ? () => void explainDocument() : undefined}
       onSuggestQuestions={suggestDocumentQuestions}
       onPrepareVisit={prepareVisitFromDocument}
-      onAskAbout={askAboutDocument}
+      onAskAbout={chatAvailable ? askAboutDocument : undefined}
       onExportFields={exportDocumentFields}
       onOpenLabs={() => openLabTimeline(confirmedLabCodes[0])}
       onReset={() => setConfirmResetDocument(true)}

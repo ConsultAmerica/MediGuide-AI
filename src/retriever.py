@@ -1,10 +1,26 @@
+import importlib.util
+
 from src.config import (
     RAG_MAX_DISTANCE,
     RAG_TOP_K,
 )
 from src.embeddings import OllamaEmbeddingService
+from src.observability.logging import get_logger
 from src.schemas import RetrievedChunk
-from src.vector_store import get_chroma_collection
+
+logger = get_logger(__name__)
+
+
+def get_chroma_collection():
+    # Imported on use: chromadb isn't installed on every deployment.
+    from src.vector_store import get_chroma_collection as load_collection
+
+    return load_collection()
+
+
+def vector_search_available() -> bool:
+    """False where chromadb isn't installed (the Vercel deployment)."""
+    return importlib.util.find_spec("chromadb") is not None
 
 
 def retrieve_chunks(
@@ -14,10 +30,25 @@ def retrieve_chunks(
     if not query or not query.strip():
         return []
 
+    if vector_search_available():
+        try:
+            return _vector_search(query.strip(), top_k)
+        except Exception:
+            # Ollama (for embeddings) or the index is down: keyword search
+            # over the same approved sources still finds evidence.
+            logger.exception("vector search failed; using keyword search")
+
+    from src.lexical_search import search
+
+    return search(query.strip(), top_k=top_k)
+
+
+def _vector_search(
+    query: str,
+    top_k: int,
+) -> list[RetrievedChunk]:
     embedding_service = OllamaEmbeddingService()
-    query_embedding = embedding_service.embed_query(
-        query.strip()
-    )
+    query_embedding = embedding_service.embed_query(query)
 
     collection = get_chroma_collection()
 

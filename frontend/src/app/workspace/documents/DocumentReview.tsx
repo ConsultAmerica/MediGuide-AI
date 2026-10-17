@@ -67,7 +67,7 @@ export function DocumentReview({
   apiUrl, docState, docFields, docConfirmed, docSelectedPage, setDocSelectedPage,
   highlightedFieldId, setHighlightedFieldId, fieldReviewState, draftStatus,
   previewZoom, setPreviewZoom, docReviewChecked, setDocReviewChecked, loading,
-  onSaveCorrection, onDecide, onUndo, onConfirm, afterFields,
+  onSaveCorrection, onDecide, onUndo, onConfirm, afterFields, emptyFields,
 }: {
   apiUrl: string;
   docState: DocState;
@@ -89,6 +89,8 @@ export function DocumentReview({
   onUndo: (fieldId: string) => void;
   onConfirm: () => void;
   afterFields?: ReactNode;
+  /** Shown in place of the review when nothing was extracted. */
+  emptyFields?: ReactNode;
 }) {
   // On narrow screens the page and the values are tabs; both stay mounted so
   // zoom, scroll and edits survive switching between them.
@@ -278,11 +280,13 @@ export function DocumentReview({
         <div className="review-panel extracted-fields doc-fields" id="review-pane-fields" role="tabpanel" aria-labelledby="review-tab-fields">
           <p className="eyebrow">{docConfirmed ? "CONFIRMED" : "VERIFICATION"}</p>
           <h3 className="doc-fields-heading">Extracted lab information</h3>
-          <p className="doc-fields-support">
-            {docConfirmed
-              ? "These values were reviewed and confirmed."
-              : "Check each value against the page, then confirm, correct or reject it. Nothing enters your records until you confirm the review."}
-          </p>
+          {docFields.length > 0 && (
+            <p className="doc-fields-support">
+              {docConfirmed
+                ? "These values were reviewed and confirmed."
+                : "Check each value against the page, then confirm, correct or reject it. Nothing enters your records until you confirm the review."}
+            </p>
+          )}
 
           {!docConfirmed && docFields.length > 0 && (
             <div className="review-toolbar">
@@ -309,7 +313,7 @@ export function DocumentReview({
             </div>
           )}
 
-          {docFields.length === 0 && <p className="doc-fields-empty">No information was found in this document.</p>}
+          {docFields.length === 0 && (emptyFields ?? <p className="doc-fields-empty">No information was found in this document.</p>)}
 
           {pageNumbers.map((pageNumber) => (
             <div key={pageNumber} className="review-page-group">
@@ -396,7 +400,8 @@ export function DocumentReview({
             </div>
           ))}
 
-          {!docConfirmed && (
+          {/* Nothing to confirm when nothing was extracted — the gate could never open. */}
+          {!docConfirmed && docFields.length > 0 && (
             <div className="confirm-gate">
               {undecided > 0 && <p className="confirm-gate-note">{undecided} {undecided === 1 ? "value still needs" : "values still need"} a decision. Confirm, correct or reject each one.</p>}
               {undecided === 0 && keptCount === 0 && docFields.length > 0 && <p className="confirm-gate-note">Every value was rejected. Keep at least one to confirm this report.</p>}

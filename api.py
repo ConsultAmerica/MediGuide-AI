@@ -49,6 +49,7 @@ from src.search import router as search_router
 from src.imaging import probe_imaging_documents, probe_imaging_viewer
 from src.imaging import router as imaging_router
 from src.medication_workspace import router as medication_workspace_router
+from src.ocr import tesseract_path
 from src.observability.logging import (
     configure_logging,
     get_logger,
@@ -451,6 +452,23 @@ def health() -> dict[str, object]:
     # Flagship Health Document Intelligence path does not require Ollama.
     essential = ("fastapi", "document_processing", "database")
     core_ok = all(statuses[key]["status"] == "ready" for key in essential)
+    # Cited answers need the text model, the embedding model and the indexed
+    # approved sources. The frontend hides chat and explanation actions
+    # when this is false instead of letting them fail.
+    ai_available = all(
+        statuses[key]["status"] == "ready"
+        for key in ("text_model", "embedding_model", "vector_store")
+    )
+    # Without a model, chat still answers by quoting approved passages
+    # found by keyword search (src/lexical_search.py).
+    try:
+        from src.lexical_search import chunk_count
+
+        keyword_ready = chunk_count() > 0
+    except Exception:
+        logger.exception("keyword index failed to load")
+        keyword_ready = False
+    answer_mode = "ai" if ai_available else "sources" if keyword_ready else "off"
 
     knowledge_count = 0
     try:
@@ -474,6 +492,11 @@ def health() -> dict[str, object]:
         "ollama": "available" if reachable else "unavailable",
         "whisper": "available" if whisper_ready else "unavailable",
         "tts": "available" if piper_ready else "unavailable",
+        "ai_available": ai_available,
+        # False on Vercel: the browser then reads photos itself
+        # (frontend/src/lib/browser-ocr.ts) and sends the words.
+        "server_ocr": tesseract_path() is not None,
+        "answer_mode": answer_mode,
         "ready": ready,
         "total": len(statuses),
         "statuses": statuses,
@@ -625,9 +648,10 @@ def chat(request: ChatRequest) -> dict[str, object]:
     try:
         from src.rag_chatbot import stream_rag_events
     except Exception as error:
+        logger.exception("chat unavailable: rag pipeline failed to import")
         raise HTTPException(
             status_code=503,
-            detail=f"Chat is unavailable on this deployment: {type(error).__name__}",
+            detail="AI answers aren't available on this version of MediGuide.",
         ) from error
 
     answer = "MediGuide could not produce an answer."
@@ -648,9 +672,10 @@ def chat(request: ChatRequest) -> dict[str, object]:
                     event["status"],
                 )
     except Exception as error:
+        logger.exception("chat failed")
         raise HTTPException(
             status_code=502,
-            detail=f"The local AI service failed: {type(error).__name__}: {error}",
+            detail="MediGuide could not complete this answer. Please try again in a moment.",
         ) from error
 
     return {"answer": answer, "sources": sources, "status": status}
@@ -661,9 +686,27 @@ def _sse(event: dict[str, object]) -> str:
 
 
 def _chat_events(request: ChatRequest) -> Iterator[str]:
+    # Technical detail is logged, never shown (see src/shared/errors.py).
     try:
         from src.rag_chatbot import stream_rag_events
+    except Exception:
+        logger.exception("chat unavailable: rag pipeline failed to import")
+        yield _sse(
+            {
+                "type": "done",
+                "answer": (
+                    "AI answers aren't available on this version of "
+                    "MediGuide. You can still upload, review and track "
+                    "your documents, labs and medications."
+                ),
+                "sources": [],
+                "status": "error",
+            }
+        )
+        yield "data: [DONE]\n\n"
+        return
 
+    try:
         for event in stream_rag_events(
             request.message,
             request.history,
@@ -671,13 +714,14 @@ def _chat_events(request: ChatRequest) -> Iterator[str]:
             reading_level=request.normalized_level(),
         ):
             yield _sse(event)
-    except Exception as error:
+    except Exception:
+        logger.exception("chat stream failed")
         yield _sse(
             {
                 "type": "done",
                 "answer": (
-                    "MediGuide could not complete this answer.\n\n"
-                    f"Technical detail: {type(error).__name__}: {error}"
+                    "MediGuide could not complete this answer. "
+                    "Please try again in a moment."
                 ),
                 "sources": [],
                 "status": "error",

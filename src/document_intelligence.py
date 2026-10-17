@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import pymupdf
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from PIL import Image, ImageOps
@@ -50,7 +50,7 @@ from src.labs.line_parser import (
     looks_like_date,
 )
 from src.labs.table_reader import Row, Word, group_rows, read_page_rows, rows_from_words
-from src.ocr import OcrPage, ocr_available, ocr_image
+from src.ocr import OcrPage, client_ocr, ocr_available, ocr_image, save_client_ocr
 from src.labs.service import create_observations_from_document
 from src.observability.logging import get_logger
 from src.shared import file_store
@@ -765,7 +765,7 @@ def _read_scanned_page(
     if ocr_available():
         set_stage("extracting")
         try:
-            ocr = ocr_image(image, dpi=OCR_RENDER_DPI)
+            ocr = ocr_image(image, dpi=OCR_RENDER_DPI, page_number=page_number)
         except Exception as error:  # noqa: BLE001 — OCR failure degrades to the vision path
             logger.warning("ocr_failed", extra={"error_type": type(error).__name__})
             ocr = None
@@ -1022,7 +1022,9 @@ async def sample_lab_report():
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload(
-    file: UploadFile = File(...), user: User = Depends(require_user)
+    file: UploadFile = File(...),
+    client_ocr_pages: str | None = Form(None, alias="client_ocr"),
+    user: User = Depends(require_user),
 ) -> UploadResponse:
     """Store the uploaded file and return immediately — no extraction yet."""
     _cleanup_expired_sessions()
@@ -1046,6 +1048,7 @@ async def upload(
 
     try:
         _, file_size = await _save_upload_file(file, folder, pages_dir, suffix)
+        save_client_ocr(folder, client_ocr_pages)
         state = DocumentState(
             document_id=document_id,
             filename=file.filename or f"document{suffix}",
@@ -1272,6 +1275,10 @@ async def _process_document_locked(document_id: str, user: User) -> DocumentStat
     _save_state(state)
 
     def _run(set_stage: Callable[[str], None]) -> tuple[list[PageInfo], list[ExtractedField]]:
+        with client_ocr(folder):
+            return _read_document(set_stage)
+
+    def _read_document(set_stage: Callable[[str], None]) -> tuple[list[PageInfo], list[ExtractedField]]:
         set_stage("validating")
         pdf_path = folder / "document.pdf"
         if pdf_path.exists():
@@ -1343,7 +1350,7 @@ async def upload_and_process(
     file: UploadFile = File(...), user: User = Depends(require_user)
 ) -> DocumentState:
     """Legacy one-step upload used by older clients."""
-    uploaded = await upload(file, user)
+    uploaded = await upload(file, None, user)
     return await process_document(uploaded.document_id, user)
 
 

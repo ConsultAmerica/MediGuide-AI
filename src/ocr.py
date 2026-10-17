@@ -12,14 +12,24 @@ it against the original page.
 
 The prepared image is a working copy only: the original upload is never
 modified or replaced.
+
+Where the Tesseract binary can't be installed (the Vercel deployment), the
+browser runs the same engine (tesseract.js) on the user's device and sends
+its words with the upload. They are stored beside the upload as
+``client-ocr.json`` and used here in place of a server-side read, so the
+rest of the pipeline is unchanged.
 """
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterator
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -60,7 +70,7 @@ def tesseract_path() -> str | None:
 
 
 def ocr_available() -> bool:
-    return tesseract_path() is not None
+    return tesseract_path() is not None or _CLIENT_PAGES.get() is not None
 
 
 @dataclass
@@ -175,7 +185,7 @@ def _quality(words: list[OcrWord], notes: list[str]) -> tuple[str, float | None]
     return "good", round(mean, 1)
 
 
-def ocr_image(image: Image.Image, *, dpi: int = 300) -> OcrPage:
+def ocr_image(image: Image.Image, *, dpi: int = 300, page_number: int = 1) -> OcrPage:
     """OCR an upright-or-rotated page image.
 
     Word coordinates are returned in the coordinate space of the *upright*
@@ -183,6 +193,9 @@ def ocr_image(image: Image.Image, *, dpi: int = 300) -> OcrPage:
     page preview.
     """
     upright = ImageOps.exif_transpose(image).convert("RGB")
+    client_pages = _CLIENT_PAGES.get()
+    if tesseract_path() is None and client_pages is not None:
+        return _client_page(upright, client_pages.get(page_number))
     prepared, scale, notes = prepare_for_ocr(upright)
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "page.png"
@@ -225,6 +238,109 @@ def ocr_image(image: Image.Image, *, dpi: int = 300) -> OcrPage:
         width=float(upright.width),
         height=float(upright.height),
         rotation_applied=rotation,
+        mean_confidence=mean,
+        quality=quality,
+        notes=notes,
+    )
+
+
+# ---------------------------------------------------------------- browser OCR
+
+CLIENT_OCR_FILENAME = "client-ocr.json"
+MAX_CLIENT_PAGES = 20
+MAX_CLIENT_WORDS = 5000
+MAX_WORD_LENGTH = 80
+
+_CLIENT_PAGES: ContextVar[dict[int, dict] | None] = ContextVar("client_ocr_pages", default=None)
+
+
+def _clean_client_pages(raw: object) -> dict[int, dict]:
+    """Validated pages from the browser: page number -> {width, height,
+    words}. Anything malformed is dropped rather than trusted."""
+    pages: dict[int, dict] = {}
+    if not isinstance(raw, list):
+        return pages
+    for item in raw[:MAX_CLIENT_PAGES]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            number = int(item.get("page", 0))
+            width = float(item.get("width", 0))
+            height = float(item.get("height", 0))
+        except (TypeError, ValueError):
+            continue
+        if number < 1 or width <= 0 or height <= 0:
+            continue
+        words: list[list[float | str]] = []
+        for word in (item.get("words") or [])[:MAX_CLIENT_WORDS]:
+            try:
+                x0, y0, x1, y1 = (float(word[key]) for key in ("x0", "y0", "x1", "y1"))
+                text = str(word["text"]).strip()[:MAX_WORD_LENGTH]
+                confidence = max(0.0, min(100.0, float(word.get("confidence", 0))))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if text and x1 > x0 and y1 > y0:
+                words.append([x0, y0, x1, y1, text, confidence])
+        pages[number] = {"width": width, "height": height, "words": words}
+    return pages
+
+
+def save_client_ocr(folder: Path, raw: str | None) -> None:
+    """Stores the browser's OCR beside an upload. Never fails the upload:
+    unreadable input is logged and ignored."""
+    if not raw:
+        return
+    try:
+        pages = _clean_client_pages(json.loads(raw))
+    except (ValueError, TypeError):
+        logger.warning("client_ocr_unparseable")
+        return
+    if pages:
+        (folder / CLIENT_OCR_FILENAME).write_text(
+            json.dumps({str(number): page for number, page in pages.items()}), encoding="utf-8"
+        )
+
+
+@contextlib.contextmanager
+def client_ocr(folder: Path) -> Iterator[None]:
+    """Makes a stored browser OCR result available to ``ocr_image`` for
+    the duration of one extraction."""
+    pages: dict[int, dict] | None = None
+    path = folder / CLIENT_OCR_FILENAME
+    if path.exists():
+        try:
+            pages = {int(number): page for number, page in json.loads(path.read_text(encoding="utf-8")).items()}
+        except (ValueError, TypeError):
+            logger.warning("client_ocr_unreadable")
+    token = _CLIENT_PAGES.set(pages)
+    try:
+        yield
+    finally:
+        _CLIENT_PAGES.reset(token)
+
+
+def _client_page(upright: Image.Image, page: dict | None) -> OcrPage:
+    """The browser's reading of a page, mapped onto this page image."""
+    _prepared, _scale, notes = prepare_for_ocr(upright)
+    words: list[OcrWord] = []
+    if page:
+        sx = upright.width / page["width"]
+        sy = upright.height / page["height"]
+        words = [
+            OcrWord(x0 * sx, y0 * sy, x1 * sx, y1 * sy, text, confidence)
+            for x0, y0, x1, y1, text, confidence in page["words"]
+        ]
+    quality, mean = _quality(words, notes)
+    if quality == "unreadable":
+        notes.append("No readable text found")
+    elif quality == "poor":
+        notes.append("Low OCR confidence")
+    logger.info("ocr_page_client", extra={"words": len(words), "quality": quality, "mean_confidence": mean})
+    return OcrPage(
+        words=words,
+        width=float(upright.width),
+        height=float(upright.height),
+        rotation_applied=0,
         mean_confidence=mean,
         quality=quality,
         notes=notes,

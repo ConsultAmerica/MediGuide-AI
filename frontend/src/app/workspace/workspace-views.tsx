@@ -51,9 +51,22 @@ import { DocumentReview } from "./documents/DocumentReview";
 import { MedicationReview } from "./medications/MedicationReview";
 import { MedicationRecords } from "./medications/MedicationRecords";
 import { LabTrendChart, isPlottable } from "./_components/LabTrendChart";
-export function Conversation({ answer, status, streaming, sources, messages, loading, error, selectedSource, setSelectedSource, onRetry, onPreset, onOpenView, onOpenDocumentPage, onUpload, onAction }: { answer: string; status: AnswerStatus; streaming: boolean; sources: Source[]; question: string; messages: Message[]; loading: string; error: string; selectedSource: number | null; setSelectedSource: (value: number | null) => void; onRetry: () => void; onPreset: (prompt: string) => void; onOpenView: (view: View) => void; onOpenDocumentPage: (page: number) => void; onUpload: () => void; onAction: (action: "copy" | "listen" | "simple" | "questions") => void }) {
+export function Conversation({ aiAvailable = true, chatAvailable = true, answer, status, streaming, sources, messages, loading, error, selectedSource, setSelectedSource, onRetry, onPreset, onOpenView, onOpenDocumentPage, onUpload, onAction }: { aiAvailable?: boolean; chatAvailable?: boolean; answer: string; status: AnswerStatus; streaming: boolean; sources: Source[]; question: string; messages: Message[]; loading: string; error: string; selectedSource: number | null; setSelectedSource: (value: number | null) => void; onRetry: () => void; onPreset: (prompt: string) => void; onOpenView: (view: View) => void; onOpenDocumentPage: (page: number) => void; onUpload: () => void; onAction: (action: "copy" | "listen" | "simple" | "questions") => void }) {
   const lastQuestion = [...messages].reverse().find((item) => item.role === "user");
   const empty = !answer && !loading && !lastQuestion;
+  if (!chatAvailable) {
+    return <div className="conversation-view">
+      <PageHero eyebrow="Educational support" title="AI answers are" accent="switched off." lead="This version of MediGuide runs without its AI model, so it can't answer questions or write explanations." />
+      <EmptyState
+        title="Everything else still works"
+        body="Upload and review lab reports, track verified results over time, check medication labels and prepare for a visit. Nothing you confirm depends on AI answers."
+      >
+        <button type="button" className="forest-button" onClick={() => onOpenView("documents")}><FileText size={15} /> Review a document</button>
+        <button type="button" className="quiet-button" onClick={() => onOpenView("labs")}>Open Labs</button>
+        <button type="button" className="quiet-button" onClick={() => onOpenView("visit")}><Stethoscope size={15} /> Prepare for a visit</button>
+      </EmptyState>
+    </div>;
+  }
   return <div className="conversation-view">
     <PageHero
       eyebrow="Educational support"
@@ -66,6 +79,7 @@ export function Conversation({ answer, status, streaming, sources, messages, loa
         <span className="care-mode"><ShieldCheck size={13} /> Educational support</span>
       </>}
     />
+    {!aiAvailable && <p className="demo-guide-banner" role="note">AI writing is switched off on this version of MediGuide. Answers quote the best-matching passages from approved sources, with citations, instead of writing a reply.</p>}
     {empty && <div className="capability-rail" aria-label="Workspace capabilities">
       <button type="button" onClick={() => { onPreset("What is diabetes in plain language?"); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); }}>
         <span className="quick-icon"><BookOpen size={18} /></span>
@@ -161,7 +175,7 @@ function Answer({ answer, status, streaming, sources, selectedSource, setSelecte
       <button className={selectedSource === Number(num) ? "citation selected" : "citation"} onClick={() => setSelectedSource(Number(num))} key={`${key}-${index}`}>[{num}]</button>
     ));
   };
-  return <article className="answer-document"><div className="answer-kicker"><span><Sparkles size={14} /> MEDIGUIDE</span><small>{streaming ? "Writing..." : "Evidence checked"}</small></div><div className="answer-content">{lines.map((line, index) => { const heading = line.startsWith("#"); const parts = line.split(/(\[D\d+\]|\[\d+(?:,\s*\d+)*\])/g); return <p className={heading ? "answer-heading" : ""} key={index}>{parts.map((part, partIndex) => renderPart(part, `${index}-${partIndex}`))}</p>; })}{streaming && <span className="streaming-cursor" aria-hidden />}</div>{!streaming && <div className="response-actions"><button onClick={() => onAction("copy")}><Clipboard size={14} /> Copy</button><button onClick={() => onAction("listen")}><Volume2 size={14} /> Listen</button><button onClick={() => onAction("simple")}><Sparkles size={14} /> Explain simply</button><button onClick={() => onAction("questions")}><Stethoscope size={14} /> Questions for clinician</button><button onClick={() => setSelectedSource(sources.length ? sources[0].number : null)}><BookOpen size={14} /> Show sources</button></div>}<p className="answer-safety-note"><ShieldCheck size={13} /> General educational information, not a diagnosis or personalized treatment recommendation.</p></article>;
+  return <article className="answer-document"><div className="answer-kicker"><span><Sparkles size={14} /> MEDIGUIDE</span><small>{streaming ? "Writing..." : status === "sources_only" ? "Quoted from approved sources" : "Evidence checked"}</small></div><div className="answer-content">{lines.map((line, index) => { const heading = line.startsWith("#"); const parts = line.split(/(\[D\d+\]|\[\d+(?:,\s*\d+)*\])/g); return <p className={heading ? "answer-heading" : ""} key={index}>{parts.map((part, partIndex) => renderPart(part, `${index}-${partIndex}`))}</p>; })}{streaming && <span className="streaming-cursor" aria-hidden />}</div>{!streaming && <div className="response-actions"><button onClick={() => onAction("copy")}><Clipboard size={14} /> Copy</button><button onClick={() => onAction("listen")}><Volume2 size={14} /> Listen</button>{status !== "sources_only" && <button onClick={() => onAction("simple")}><Sparkles size={14} /> Explain simply</button>}<button onClick={() => onAction("questions")}><Stethoscope size={14} /> Questions for clinician</button><button onClick={() => setSelectedSource(sources.length ? sources[0].number : null)}><BookOpen size={14} /> Show sources</button></div>}<p className="answer-safety-note"><ShieldCheck size={13} /> General educational information, not a diagnosis or personalized treatment recommendation.</p></article>;
 }
 
 export function Composer({ question, setQuestion, onSubmit, onKeyDown, onUpload, onVoice, recording, loading, answerDetail, setAnswerDetail, readingLevel, setReadingLevel }: { question: string; setQuestion: (value: string) => void; onSubmit: (event?: FormEvent) => void; onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void; onUpload: () => void; onVoice: () => void; recording: boolean; loading: boolean; answerDetail: "Concise" | "Standard" | "Detailed"; setAnswerDetail: (value: "Concise" | "Standard" | "Detailed") => void; readingLevel: "Standard" | "Plain"; setReadingLevel: (value: "Standard" | "Plain") => void }) {
@@ -282,10 +296,12 @@ export function Documents({
   onDragLeave: () => void;
   onFieldChange: (fieldId: string, patch: ReviewablePatch) => void;
   onConfirm: () => void;
-  onExplain: () => void;
+  /** Omitted when AI answers are unavailable; the action is then hidden. */
+  onExplain?: () => void;
   onSuggestQuestions: () => void;
   onPrepareVisit: () => void;
-  onAskAbout: () => void;
+  /** Omitted when AI answers are unavailable; the action is then hidden. */
+  onAskAbout?: () => void;
   onExportFields: () => void;
   onOpenLabs: () => void;
   onReset: () => void;
@@ -399,6 +415,10 @@ export function Documents({
   const activePreview = docState.pages.find((page) => page.page_number === docSelectedPage) || docState.pages[0];
   // Pages that were hard to read, for one plain-language warning above review.
   const hardPages = docState.pages.filter((page) => page.quality === "poor" || page.quality === "unreadable" || page.text_source === "vision" || (page.quality_notes || []).some((note) => /Low resolution|Blurry|Low contrast/.test(note)));
+  // Nothing was extracted: there is nothing to review or confirm, so the page
+  // explains why once and offers ways forward instead of a confirm step.
+  const nothingFound = !docConfirmed && !loading && !processStage && docFields.length === 0;
+  const pageNotes = Array.from(new Set(docState.pages.flatMap((page) => page.quality_notes || [])));
 
   if ((loading || processStage) && !docFields.length) {
     return <div className="workflow-view doc-intel-view">
@@ -463,7 +483,7 @@ export function Documents({
       </div>
     )}
 
-    {!docConfirmed && hardPages.length > 0 && (
+    {!docConfirmed && !nothingFound && hardPages.length > 0 && (
       <div className="scan-quality-banner" role="status">
         <strong>{hardPages.length === 1 ? `Page ${hardPages[0].page_number} was hard to read` : `${hardPages.length} pages were hard to read`}</strong>
         <ul>
@@ -492,13 +512,13 @@ export function Documents({
       </div>
     )}
     {(loading || processStage) && <ProcessingChecklist activeStage={processStage || mapStatusToProcessStage(docState.status, loading)} failed={processFailed} waitingMessage={processRetry ? "Document processing is starting up." : undefined} attempt={processRetry?.attempt} maxAttempts={processRetry?.max} />}
-    {demoGuide && <p className="demo-guide-banner">{docConfirmed ? "Step 1 of 4 complete — your values are confirmed. Next: see them in Labs." : demoGuide}{docConfirmed ? <>{" "}<button type="button" className="quiet-button" onClick={onOpenLabsFromDemo}>Open Labs</button></> : null}</p>}
+    {demoGuide && !nothingFound && <p className="demo-guide-banner">{docConfirmed ? "Step 1 of 4 complete — your values are confirmed. Next: see them in Labs." : demoGuide}{docConfirmed ? <>{" "}<button type="button" className="quiet-button" onClick={onOpenLabsFromDemo}>Open Labs</button></> : null}</p>}
     {labsHint && <div className="labs-persist-hint-row">
       <p className="labs-persist-hint"><FlaskConical size={14} /> {labsHint}</p>
       {confirmedLabCodes.length > 0 && <button type="button" className="quiet-button" onClick={onOpenLabs}><TrendingUp size={14} /> View in Labs</button>}
     </div>}
 
-    {activePreview?.text_source && (
+    {activePreview?.text_source && !nothingFound && (
       <p className={`page-read-info quality-${activePreview.quality || "none"}`}>
         {pageReadLabel(activePreview)}
       </p>
@@ -524,13 +544,27 @@ export function Documents({
       onDecide={onDecide}
       onUndo={onUndo}
       onConfirm={onConfirm}
+      emptyFields={nothingFound ? (
+        <EmptyState
+          title="No lab results could be read from this document"
+          body={`${pageNotes.length ? `${pageNotes.join(" · ")}. ` : ""}Nothing from it has been added to your records. Upload a sharper, well-lit scan or the original PDF and try again. If this is an MRI, X-ray or CT report, use Imaging instead.`}
+        >
+          <button type="button" className="forest-button" onClick={onUpload}><Paperclip size={15} /> Upload a clearer copy</button>
+          {onOpenImaging ? <button type="button" className="quiet-button" onClick={onOpenImaging}>Open Imaging</button> : null}
+          <button type="button" className="quiet-button" onClick={onReset}><Trash2 size={14} /> Delete document</button>
+        </EmptyState>
+      ) : undefined}
       afterFields={<>
-        {docConfirmed && !docExplain && <div className="explain-gate">
+        {docConfirmed && !docExplain && !onExplain && <div className="explain-actions">
+          <button className="quiet-button" type="button" onClick={onOpenLabs}><FlaskConical size={15} /> Open Labs</button>
+          <button className="quiet-button" type="button" onClick={onPrepareVisit}><Stethoscope size={15} /> Prepare visit questions</button>
+        </div>}
+        {docConfirmed && !docExplain && onExplain && <div className="explain-gate">
           <label className="explain-question">Ask a question about this document (optional)<textarea rows={3} value={docQuestion} onChange={(event) => setDocQuestion(event.target.value)} placeholder="Explain the confirmed information in plain language and suggest questions for a qualified healthcare professional." /></label>
           <div className="explain-actions">
             <button className="quiet-button" type="button" onClick={onOpenLabs}><FlaskConical size={15} /> Open Labs</button>
             <button className="quiet-button" type="button" onClick={onPrepareVisit}><Stethoscope size={15} /> Prepare visit questions</button>
-            <button className="quiet-button" type="button" onClick={onAskAbout}><Sparkles size={15} /> Ask about these values</button>
+            {onAskAbout && <button className="quiet-button" type="button" onClick={onAskAbout}><Sparkles size={15} /> Ask about these values</button>}
             <button className="quiet-button" type="button" onClick={onSuggestQuestions}>Suggest questions</button>
             <button className="forest-button" disabled={Boolean(loading)} onClick={onExplain}>Understand this result <ArrowUpRight size={16} /></button>
           </div>
@@ -538,7 +572,7 @@ export function Documents({
         {docConfirmed && docExplain && <div className="explain-actions">
           <button className="quiet-button" type="button" onClick={onOpenLabs}><FlaskConical size={15} /> Open Labs</button>
           <button className="quiet-button" type="button" onClick={onPrepareVisit}><Stethoscope size={15} /> Prepare visit questions</button>
-          <button className="quiet-button" type="button" onClick={onAskAbout}><Sparkles size={15} /> Ask about these values</button>
+          {onAskAbout && <button className="quiet-button" type="button" onClick={onAskAbout}><Sparkles size={15} /> Ask about these values</button>}
         </div>}
       </>}
     />
@@ -740,7 +774,7 @@ function buildVisitSummaryText(fields: Record<string, string>, includeLabs: bool
   return lines.join("\n").trim();
 }
 
-export function Visit({ fields, setFields, step, setStep, labPoints, medFields, onGenerate }: { fields: Record<string, string>; setFields: (value: Record<string, string>) => void; step: number; setStep: (value: number) => void; labPoints: LabPoint[]; medFields: MedField[]; onGenerate: () => void }) {
+export function Visit({ fields, setFields, step, setStep, labPoints, medFields, onGenerate }: { fields: Record<string, string>; setFields: (value: Record<string, string>) => void; step: number; setStep: (value: number) => void; labPoints: LabPoint[]; medFields: MedField[]; onGenerate?: () => void }) {
   const [includeLabs, setIncludeLabs] = useState(true);
   const [includeMeds, setIncludeMeds] = useState(true);
   const [summary, setSummary] = useState("");
@@ -797,7 +831,7 @@ export function Visit({ fields, setFields, step, setStep, labPoints, medFields, 
         <button type="button" className="quiet-button" onClick={() => void navigator.clipboard?.writeText(summary)}><Clipboard size={14} /> Copy</button>
         <button type="button" className="quiet-button" onClick={() => window.print()}>Print</button>
         <button type="button" className="quiet-button" onClick={() => downloadTextFile("mediguide-visit-prep.txt", summary)}><ArrowUpRight size={14} /> Download summary</button>
-        <button type="button" className="forest-button" onClick={onGenerate}>Continue in conversation <ArrowUpRight size={16} /></button>
+        {onGenerate && <button type="button" className="forest-button" onClick={onGenerate}>Continue in conversation <ArrowUpRight size={16} /></button>}
       </div>
     </div>}
 
@@ -930,7 +964,7 @@ export function LabTimeline({
   onInspectDocument: (documentId: string, pageNumber: number, fieldId?: string) => void;
   onExport: () => void;
   onAddToVisit: () => void;
-  onAskAbout: () => void;
+  onAskAbout?: () => void;
   onRequestDeleteObservation: (observationId: string) => void;
   onOpenDocuments: () => void;
 }) {
@@ -974,10 +1008,10 @@ export function LabTimeline({
             </optgroup>}
           </select>
         </label>
-        <button type="button" className="quiet-button" onClick={onAskAbout} disabled={!points.length}><Sparkles size={14} /> Understand this result</button>
+        {onAskAbout && <button type="button" className="quiet-button" onClick={onAskAbout} disabled={!points.length}><Sparkles size={14} /> Understand this result</button>}
         <button type="button" className="quiet-button" onClick={onAddToVisit}><Stethoscope size={14} /> Add to visit prep</button>
         <button type="button" className="quiet-button" onClick={onExport} disabled={!points.length}><Clipboard size={14} /> Export CSV</button>
-        {!points.length && <p className="page-hero-note">Understanding and export become available once this test has verified results.</p>}
+        {!points.length && <p className="page-hero-note">{onAskAbout ? "Understanding and export become" : "Export becomes"} available once this test has verified results.</p>}
       </>}
     />
 
@@ -1090,7 +1124,7 @@ export function LabTimeline({
           <button type="button" className="forest-button" onClick={() => onInspectDocument(selectedPoint.document_id, selectedPage, selectedPoint.field_id)}>
             <FileText size={14} /> View source page
           </button>
-          <button type="button" className="quiet-button" onClick={onAskAbout}><Sparkles size={14} /> Understand this result</button>
+          {onAskAbout && <button type="button" className="quiet-button" onClick={onAskAbout}><Sparkles size={14} /> Understand this result</button>}
           <button type="button" className="quiet-button" onClick={() => onInspectDocument(selectedPoint.document_id, selectedPage)}>View document</button>
           <button type="button" className="quiet-button destructive-action" onClick={() => onRequestDeleteObservation(selectedPoint.observation_id)}>
             <Trash2 size={14} /> Delete result

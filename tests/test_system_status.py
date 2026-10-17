@@ -58,3 +58,13 @@ def test_system_status_lists_the_new_capabilities(api_client):
     keys = {component["key"] for component in response.json()["components"]}
     assert "imaging_reports" in keys
     assert "medication_labels" in keys
+
+
+def test_health_reports_ai_unavailable_when_ollama_is_down(api_client, monkeypatch):
+    """The frontend hides chat and explanation actions on this flag, so it
+    must be false whenever the text model can't be reached."""
+    import api as api_module
+
+    monkeypatch.setattr(api_module, "_probe_ollama", lambda: (False, "simulated outage", set()))
+    body = api_client.get("/api/health").json()
+    assert body["ai_available"] is False

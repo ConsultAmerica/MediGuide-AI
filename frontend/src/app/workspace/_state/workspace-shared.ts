@@ -97,7 +97,7 @@ export type DocUploadResult = { document_id: string; filename: string; content_t
 export type DocEvidenceSource = { citation_number: number; title: string; publisher: string; source_url?: string; passage?: string };
 export type DocExplain = { document_id: string; answer_markdown: string; document_pages_cited: number[]; sources: DocEvidenceSource[]; limitations: string[] };
 export type HealthStatus = { status: string; detail: string };
-export type HealthResponse = { status: string; ready: number; total: number; statuses: Record<string, HealthStatus>; knowledge?: { active_chunks?: number; approved_sources?: number } };
+export type HealthResponse = { status: string; ready: number; total: number; statuses: Record<string, HealthStatus>; ai_available?: boolean; server_ocr?: boolean; answer_mode?: "ai" | "sources" | "off"; knowledge?: { active_chunks?: number; approved_sources?: number } };
 export type MedField = {
   key: string; label: string; value: string; confidence: DocFieldConfidence | "not_found"; source_text: string; user_edited: boolean;
   /** e.g. from_directions, ambiguous_directions, dose_range, shared_detail, ai_read */
@@ -212,7 +212,7 @@ export function pathToView(pathname: string): View | undefined {
   const segment = pathname.replace(/^\/workspace\/?/, "").split("/")[0];
   return PATH_TO_VIEW[segment];
 }
-export type AnswerStatus = "answered" | "withheld" | "emergency" | "no_evidence" | "error" | "";
+export type AnswerStatus = "answered" | "sources_only" | "withheld" | "emergency" | "no_evidence" | "error" | "";
 export type SseEvent =
   | { type: "stage"; stage: string }
   | { type: "sources"; sources: Source[] }

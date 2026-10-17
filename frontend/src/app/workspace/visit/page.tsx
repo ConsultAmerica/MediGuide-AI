@@ -7,7 +7,7 @@ import { useWorkspaceContext } from "../_state/WorkspaceStateProvider";
 export default function VisitPage() {
   const {
     visitFields, setVisitFields, visitStep, setVisitStep, labSummary, labPoints,
-    medFields, generateVisitSummary, loadLabSummary,
+    medFields, generateVisitSummary, loadLabSummary, chatAvailable,
   } = useWorkspaceContext();
 
   // loadLabSummary is a plain closure recreated every provider render,
@@ -23,7 +23,7 @@ export default function VisitPage() {
       setStep={setVisitStep}
       labPoints={labSummary.length ? labSummary : labPoints}
       medFields={medFields}
-      onGenerate={generateVisitSummary}
+      onGenerate={chatAvailable ? generateVisitSummary : undefined}
     />
   );
 }

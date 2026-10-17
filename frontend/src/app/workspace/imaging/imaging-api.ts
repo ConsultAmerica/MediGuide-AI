@@ -1,4 +1,5 @@
 import { fetchWithTimeout, parseApiError, VISION_PROCESS_TIMEOUT_MS } from "../../../lib/api-error";
+import { browserOcrField } from "../../../lib/browser-ocr";
 import type {
   CompareBucket,
   FindingExplanation,
@@ -85,11 +86,16 @@ export function uploadReport(
 ): Promise<{ document_id: string; sections: Record<string, string> }> {
   const form = new FormData();
   form.append("file", file);
-  return fetchWithTimeout(
-    `${apiUrl}/api/imaging/studies/${studyId}/report`,
-    { method: "POST", body: form },
-    VISION_PROCESS_TIMEOUT_MS,
-  ).then((r) => asJson(r, "MediGuide could not read this imaging report."));
+  return browserOcrField(file)
+    .then((clientOcr) => {
+      if (clientOcr) form.append("client_ocr", clientOcr);
+      return fetchWithTimeout(
+        `${apiUrl}/api/imaging/studies/${studyId}/report`,
+        { method: "POST", body: form },
+        VISION_PROCESS_TIMEOUT_MS,
+      );
+    })
+    .then((r) => asJson(r, "MediGuide could not read this imaging report."));
 }
 
 export interface ReportProcessingStatus {

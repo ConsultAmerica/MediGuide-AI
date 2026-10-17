@@ -38,7 +38,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     language, translateAnswer,
     setHealthOpen, setHelpOpen, setSettingsOpen, setPrivacyOpen,
     health, healthOpen, helpOpen, settingsOpen, privacyOpen,
-    checkHealth,
+    checkHealth, chatAvailable,
     handleViewChange,
     clearSession,
     toasts, setToasts,
@@ -104,7 +104,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         <section className="main-panel">
           <WorkspaceReveal />
           {children}
-          {showComposer && (
+          {showComposer && chatAvailable && (
             <>
               {pendingTranscript && (
                 <TranscriptReview

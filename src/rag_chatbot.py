@@ -24,7 +24,9 @@ from src.config import (
     RAG_MAX_PASSAGE_WORDS,
     TEMPERATURE,
 )
+from src.observability.logging import get_logger
 from src.prompts import RAG_MEDICAL_SYSTEM_PROMPT
+from src.schemas import RetrievedChunk
 from src.retriever import (
     diversify_results,
     retrieve_chunks,
@@ -43,6 +45,73 @@ ANSWER_DETAIL_INSTRUCTIONS = {
         "nuances, and note any caveats present in the evidence."
     ),
 }
+
+logger = get_logger(__name__)
+
+# Technical detail is logged, never shown (see src/shared/errors.py).
+SEARCH_FAILED_MESSAGE = (
+    "MediGuide could not search the approved knowledge base right now. "
+    "Please try again in a moment."
+)
+GENERATION_FAILED_MESSAGE = (
+    "The evidence was found, but MediGuide could not write the answer "
+    "right now. Please try again in a moment."
+)
+
+# Where no text model is reachable (the Vercel deployment), chat still
+# answers by quoting the best-matching approved passages, labelled as
+# quotes. Nothing is generated, so nothing needs model validation.
+SOURCES_ONLY_EXCERPTS = 3
+SOURCES_ONLY_NOTE = (
+    "## About this answer\n"
+    "AI writing is switched off on this version of MediGuide, so these "
+    "are passages quoted from approved sources, not a written answer. "
+    "They may not cover your exact question. Ask a qualified healthcare "
+    "professional about your own situation."
+)
+
+
+def text_model_ready() -> bool:
+    """True when Ollama answers and has the chat model pulled."""
+    from src.shared.ollama_health import probe_ollama
+
+    reachable, _detail, installed = probe_ollama()
+    wanted = MODEL_NAME if ":" in MODEL_NAME else f"{MODEL_NAME}:latest"
+    return reachable and (wanted in installed or MODEL_NAME in installed)
+
+
+def _sources_only_answer(
+    query: str,
+    retrieved: list[RetrievedChunk],
+) -> tuple[str, list[CitationSource]]:
+    from src.lexical_search import best_passage
+
+    chosen: list[RetrievedChunk] = []
+    seen: set[str] = set()
+    for chunk in retrieved:
+        source_id = str(chunk.metadata.get("source_id", chunk.chunk_id))
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        chosen.append(chunk)
+        if len(chosen) == SOURCES_ONLY_EXCERPTS:
+            break
+
+    sources = build_citation_sources(chosen)
+    numbers = build_source_number_map(sources)
+    excerpts = [
+        f"“{best_passage(chunk.text, query)}” "
+        f"[{numbers[str(chunk.metadata.get('source_id', chunk.chunk_id))]}]"
+        for chunk in chosen
+    ]
+    answer = (
+        "## What approved sources say\n"
+        + "\n\n".join(excerpts)
+        + f"\n\n{SOURCES_ONLY_NOTE}\n\n---\n"
+        + f"{format_source_list(sources)}\n\n---\n{SAFETY_REMINDER}"
+    )
+    return answer, sources
+
 
 READING_LEVEL_INSTRUCTIONS = {
     "Plain": (
@@ -63,8 +132,9 @@ def _prepare_generation(
     """Runs the pre-generation pipeline.
 
     Returns ("early", answer, None) if a final answer can already be
-    given without calling the model, otherwise
-    ("ready", messages, sources).
+    given without calling the model, ("sources", answer, sources) when
+    no model is reachable and the answer is quoted approved passages,
+    otherwise ("ready", messages, sources).
     """
     if not user_message or not user_message.strip():
         return "early", "Please enter a health-education question.", None
@@ -83,13 +153,9 @@ def _prepare_generation(
     try:
         retrieved = retrieve_chunks(clean_message)
         retrieved = diversify_results(retrieved)
-    except Exception as error:
-        return (
-            "early",
-            "MediGuide could not search the approved knowledge base.\n\n"
-            f"Technical detail: {type(error).__name__}: {error}",
-            None,
-        )
+    except Exception:
+        logger.exception("approved-source retrieval failed")
+        return "early", SEARCH_FAILED_MESSAGE, None
 
     if not retrieved:
         return (
@@ -108,6 +174,10 @@ def _prepare_generation(
             f"{SAFETY_REMINDER}",
             None,
         )
+
+    if not text_model_ready():
+        answer, quoted = _sources_only_answer(clean_message, retrieved)
+        return "sources", answer, quoted
 
     sources = build_citation_sources(retrieved)
     source_map = build_source_number_map(sources)
@@ -280,7 +350,7 @@ def stream_rag_response(
         reading_level=reading_level,
     )
 
-    if stage == "early":
+    if stage in ("early", "sources"):
         yield payload
         return
 
@@ -306,12 +376,9 @@ def stream_rag_response(
             accumulated += piece
             yield accumulated
 
-    except Exception as error:
-        yield (
-            "The evidence was retrieved, but the local model could "
-            "not generate the answer.\n\n"
-            f"Technical detail: {type(error).__name__}: {error}"
-        )
+    except Exception:
+        logger.exception("answer generation failed")
+        yield GENERATION_FAILED_MESSAGE
         return
 
     yield _finalize_answer(accumulated.strip(), sources)
@@ -337,7 +404,8 @@ def stream_rag_events(
         The next fragment of the unvalidated draft.
     ``{"type": "done", "answer": str, "sources": list, "status": str}``
         The validated answer. ``status`` is ``"answered"``,
-        ``"withheld"``, ``"emergency"``, ``"no_evidence"`` or ``"error"``.
+        ``"withheld"``, ``"emergency"``, ``"no_evidence"``, ``"error"``
+        or ``"sources_only"`` (quoted passages; no model was available).
         The answer always replaces any streamed draft.
     """
     yield {"type": "stage", "stage": "Checking safety"}
@@ -383,6 +451,16 @@ def stream_rag_events(
 
     serialized = serialize_sources(sources)
     yield {"type": "sources", "sources": serialized}
+
+    if stage == "sources":
+        yield {
+            "type": "done",
+            "answer": payload,
+            "sources": serialized,
+            "status": "sources_only",
+        }
+        return
+
     yield {"type": "stage", "stage": "Writing a cited answer"}
 
     messages = payload
@@ -407,14 +485,11 @@ def stream_rag_events(
             accumulated += piece
             yield {"type": "delta", "text": piece}
 
-    except Exception as error:
+    except Exception:
+        logger.exception("answer generation failed")
         yield {
             "type": "done",
-            "answer": (
-                "The evidence was retrieved, but the local model could "
-                "not generate the answer.\n\n"
-                f"Technical detail: {type(error).__name__}: {error}"
-            ),
+            "answer": GENERATION_FAILED_MESSAGE,
             "sources": serialized,
             "status": "error",
         }

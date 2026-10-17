@@ -58,6 +58,7 @@ import {
   type View,
 } from "./workspace-shared";
 import { apiFetch } from "../../../lib/auth";
+import { browserOcrField, needsBrowserOcr, setServerOcrAvailable } from "../../../lib/browser-ocr";
 
 function useWorkspaceState() {
   const router = useRouter();
@@ -202,7 +203,12 @@ function useWorkspaceState() {
   }, [mobileNavOpen]);
 
   async function checkHealth() {
-    try { const response = await apiFetch(`${API_URL}/api/health`); if (!response.ok) throw new Error(); setHealth(await response.json()); }
+    try {
+      const response = await apiFetch(`${API_URL}/api/health`); if (!response.ok) throw new Error();
+      const data: HealthResponse = await response.json();
+      setServerOcrAvailable(data.server_ocr !== false);
+      setHealth(data);
+    }
     catch { setHealth({ status: "unavailable", ready: 0, total: 10, statuses: {} }); }
   }
 
@@ -295,6 +301,11 @@ function useWorkspaceState() {
 
     const formData = new FormData();
     formData.append("file", file);
+    if (needsBrowserOcr(file)) {
+      setLoadingStage("Reading the text in your photo on this device...");
+      const clientOcr = await browserOcrField(file);
+      if (clientOcr) formData.append("client_ocr", clientOcr);
+    }
 
     let response: Response;
     try {
@@ -879,6 +890,12 @@ function useWorkspaceState() {
     setLoadingStage("Reading the medication label...");
     const form = new FormData(); form.append("file", file);
     try {
+      if (needsBrowserOcr(file)) {
+        setLoadingStage("Reading the label photo on this device...");
+        const clientOcr = await browserOcrField(file);
+        if (clientOcr) form.append("client_ocr", clientOcr);
+        setLoadingStage("Reading the medication label...");
+      }
       const response = await fetchWithTimeout(`${API_URL}/api/medications/v2/upload`, { method: "POST", body: form }, VISION_PROCESS_TIMEOUT_MS);
       if (!response.ok) {
         const apiError = await parseApiError(response, "MediGuide could not read that label.");
@@ -1051,6 +1068,11 @@ function useWorkspaceState() {
     loadingStage, setLoadingStage,
     error, setError,
     health, setHealth,
+    // Assumed on until /api/health says otherwise, so nothing flickers away
+    // during the first check.
+    aiAvailable: health?.ai_available !== false,
+    // Chat also works without AI, by quoting approved sources.
+    chatAvailable: health?.answer_mode !== "off",
     healthOpen, setHealthOpen,
     privacyOpen, setPrivacyOpen,
     settingsOpen, setSettingsOpen,
